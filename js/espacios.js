@@ -83,7 +83,8 @@ export function caraEn(cs, pt) {
 
 const CELDA = 0.2;   // m
 const CIERRE = 1.25; // m: se cierran los huecos entre muros de hasta 2,5 m
-const PATIO = 0.6;   // un recinto encerrado y sin salas, con más de esto de su borde en fachada, es un patio
+const PATIO = 0.6;   // un recinto encerrado y sin salas, con más de esto de su borde en fachada…
+const CALLE = 0.2;   // …y con menos de esto de su borde dando a la calle, es un patio de luces
 
 /** Celdas de la rejilla a menos de r de cada muro (r = medio grosor + «extra»). */
 function rasterMuros(p, R, extra, valor) {
@@ -106,11 +107,11 @@ function rasterMuros(p, R, extra, valor) {
   return m;
 }
 
-/** De una planta: qué celdas son edificio y cuáles patio. */
-function huellaDePlanta(p, R) {
-  const { x0, y0, nx, ny } = R, N = nx * ny;
+/** De una planta: sus muros engordados (2 = de fachada) para cerrar los huecos, y lo que queda
+ *  fuera de ellos (relleno desde el borde de la rejilla). */
+function barreraYFuera(p, R) {
+  const { nx, ny } = R, N = nx * ny;
   const cola = new Int32Array(N);
-  // muros engordados (2 = de fachada): con ellos se decide qué es fuera y qué es patio
   const barrera = rasterMuros(p, R, CIERRE, (mu) => (mu.tipo === 'fachada' ? 2 : 1));
   const fuera = new Uint8Array(N);
   let a = 0, b = 0;
@@ -121,7 +122,27 @@ function huellaDePlanta(p, R) {
     const k = cola[a++], i = k % nx;
     if (i > 0) pon(k - 1); if (i < nx - 1) pon(k + 1); if (k >= nx) pon(k - nx); if (k < N - nx) pon(k + nx);
   }
-  // recintos encerrados: patio si casi todo su borde es fachada y no tiene dentro una sala cerrada
+  return { barrera, fuera };
+}
+
+/** De una planta: qué celdas son edificio y cuáles patio. «calle» es lo que queda fuera en todas
+ *  las plantas del edificio (un pasillo que en una planta se sale por un hueco no es calle). */
+function huellaDePlanta(p, R, { barrera, fuera }, calle) {
+  const { x0, y0, nx, ny } = R, N = nx * ny;
+  const cola = new Int32Array(N);
+  let a = 0, b = 0;
+  // recintos encerrados: patio si su borde es casi todo fachada, al otro lado de esas fachadas
+  // hay edificio (no la calle: si no, es una nave o un vestíbulo) y no tiene dentro una sala cerrada.
+  // El otro lado es el primer sitio libre en esa dirección, cruzando muros y pasillos estrechos.
+  const daALaCalle = (k, v) => {
+    const di = (v % nx) - (k % nx), paso = v - k;
+    for (let w = v; ;) {
+      const i = (w % nx) + di;
+      w += paso;
+      if (w < 0 || w >= N || i < 0 || i >= nx) return true;
+      if (!barrera[w]) return calle[w] === 1;
+    }
+  };
   const info = salas(p);
   const conSala = new Set();
   for (const [id, s] of Object.entries(info.salas)) {
@@ -134,17 +155,22 @@ function huellaDePlanta(p, R) {
   for (let k0 = 0; k0 < N; k0++) {
     if (barrera[k0] || fuera[k0] || visto[k0]) continue;
     a = 0; b = 0; cola[b++] = k0; visto[k0] = 1;
-    let fachada = 0, otro = 0, sala = false;
+    let fachada = 0, otro = 0, calle = 0, sala = false;
     while (a < b) {
       const k = cola[a++], i = k % nx;
       if (conSala.has(k)) sala = true;
       for (const v of [i > 0 ? k - 1 : -1, i < nx - 1 ? k + 1 : -1, k >= nx ? k - nx : -1, k < N - nx ? k + nx : -1]) {
         if (v < 0) continue;
-        if (barrera[v]) { if (barrera[v] === 2) fachada++; else otro++; continue; }
+        if (barrera[v]) {
+          if (barrera[v] === 2) fachada++; else otro++;
+          if (daALaCalle(k, v)) calle++;
+          continue;
+        }
         if (!visto[v] && !fuera[v]) { visto[v] = 1; cola[b++] = v; }
       }
     }
-    if (!sala && fachada > PATIO * (fachada + otro) && b * CELDA * CELDA > 4) for (let q = 0; q < b; q++) patio[cola[q]] = 1;
+    const borde = fachada + otro || 1;
+    if (!sala && fachada > PATIO * borde && calle < CALLE * borde && b * CELDA * CELDA > 1) for (let q = 0; q < b; q++) patio[cola[q]] = 1;
   }
   // la franja que los muros engordados quitaron se reparte entre fuera, patio y el interior, a
   // la vez y sin cruzar los muros de verdad: cada celda va con lo que tiene más cerca. Así las
@@ -251,7 +277,11 @@ export function huellasEdificio(pls) {
     const margen = CIERRE + 4 * CELDA;
     const R = { x0: x0 - margen, y0: y0 - margen, nx: Math.ceil((x1 - x0 + 2 * margen) / CELDA), ny: Math.ceil((y1 - y0 + 2 * margen) / CELDA) };
     const N = R.nx * R.ny;
-    const por = [...grupo].sort((a, b) => a.nivel - b.nivel).map((p) => ({ p, ...huellaDePlanta(p, R) }));
+    const orden = [...grupo].sort((a, b) => a.nivel - b.nivel);
+    const bases = orden.map((p) => barreraYFuera(p, R));
+    const calle = new Uint8Array(N).fill(1);
+    for (const x of bases) for (let k = 0; k < N; k++) calle[k] &= x.fuera[k];
+    const por = orden.map((p, i) => ({ p, ...huellaDePlanta(p, R, bases[i], calle) }));
     const deGrupo = new Map();
     const patios = new Uint8Array(N); // patios de esta planta y de las de encima
     for (let i = por.length - 1; i >= 0; i--) {
