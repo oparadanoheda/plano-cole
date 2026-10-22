@@ -18,6 +18,7 @@ export function caras(p) {
   const visto = new Set();
   const clave = (e) => e.de + '>' + e.a + '|' + e.mid;
   const res = [];
+  const exteriores = [];
   for (const lista of ady.values()) {
     for (const ini of lista) {
       if (visto.has(clave(ini))) continue;
@@ -34,8 +35,10 @@ export function caras(p) {
       const pts = nodos.map((n) => p.nodos[n]);
       const A = area(pts);
       if (A > 1e-4) res.push({ nodos, muros, pts, area: A });
+      else if (A < -1) exteriores.push({ nodos, muros, pts, area: -A });
     }
   }
+  res.exteriores = exteriores; // contornos exteriores de cada grupo de muros (huella del edificio)
   return res;
 }
 

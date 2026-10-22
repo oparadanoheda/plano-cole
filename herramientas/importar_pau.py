@@ -32,23 +32,30 @@ PT = 0.0254 / 72  # metros de papel por punto PDF
 # Hojas del PDF de Securitec 2026. «recorte» en puntos PDF (x0, y0, x1, y1):
 # solo se importa lo que cae dentro (fuera quedan cajetín, leyenda y minimapa).
 # Las tres plantas del edificio principal comparten recorte y origen, así que
-# salen superpuestas exactamente.
+# salen superpuestas exactamente; su marco es el «sitio». «colocacion» sitúa las
+# demás hojas en ese marco: se sacó casando la hoja de emplazamiento (1/1000) y
+# se ajustó a ojo sobre la ortofoto PNOA. «altura» es de suelo a suelo, para el 3D.
 HOJAS = [
     dict(pag=2, escala=150, edificio='principal', planta='Planta baja', nivel=0,
-         recorte=(230, 15, 1060, 705), muros=True),
+         recorte=(230, 15, 1060, 705), muros=True, altura=3.4),
     dict(pag=3, escala=150, edificio='principal', planta='Planta primera', nivel=1,
-         recorte=(230, 15, 1060, 705), muros=True),
+         recorte=(230, 15, 1060, 705), muros=True, altura=3.4),
     dict(pag=4, escala=150, edificio='principal', planta='Planta segunda', nivel=2,
-         recorte=(230, 15, 1060, 705), muros=True),
+         recorte=(230, 15, 1060, 705), muros=True, altura=3.4),
     dict(pag=5, escala=100, edificio='gimnasio', planta='Planta baja', nivel=0,
-         recorte=(60, 110, 600, 590), muros=False),
+         recorte=(60, 110, 600, 590), muros=False, colocacion=(9.17, -27.9), altura=4.5),
     dict(pag=5, escala=100, edificio='gimnasio', planta='Planta primera', nivel=1,
-         recorte=(640, 110, 1150, 680), muros=False, origen=(640, 110)),
+         recorte=(640, 110, 1150, 680), muros=False, origen=(640, 110), colocacion=(9.5, -27.9), altura=4.5),
     dict(pag=6, escala=50, edificio='conserje', planta='Planta baja', nivel=0,
-         recorte=(215, 20, 1030, 772), muros=False),
+         recorte=(215, 20, 1030, 772), muros=False, colocacion=(36.9, -21.0), altura=3.0),
     dict(pag=1, escala=1000, edificio='exterior', planta='Emplazamiento', nivel=0,
-         recorte=(40, 10, 1191, 712), muros=False),
+         recorte=(40, 10, 1191, 712), muros=False, colocacion=(-138.53, -159.30)),
 ]
+
+# Georreferencia: el punto (x, y) del sitio está en (lat, lon) y el «arriba» de los
+# planos mira a 71° desde el norte. Sale de la coordenada UTM del plano de situación
+# (X 444827.80, Y 4481015.00, ETRS89 huso 30) ajustada sobre la ortofoto PNOA.
+SITIO = dict(ancla=dict(x=20.74, y=18.765, lat=40.477972, lon=-3.6509988), rumbo=71.0)
 
 EDIFICIOS = {
     'principal': 'Edificio principal',
@@ -962,8 +969,10 @@ def importar(pdf, depurar=None):
         ox, oy = H.get('origen', H['recorte'][:2])
         tr = lambda x, y, ox=ox, oy=oy, k=k: ((x - ox) * k, (y - oy) * k)
 
+        cx, cy = H.get('colocacion', (0, 0))
         planta = dict(id=nid('p'), nombre=H['planta'], nivel=H['nivel'],
-                      nodos={}, muros={}, pilares=[], espacios={}, elementos={},
+                      nodos={}, muros={}, pilares=[], espacios={}, elementos={}, anotaciones=[],
+                      colocacion=dict(x=cx, y=cy, giro=0), altura=H.get('altura', 3.2),
                       calco=dict(origen=f"PAU 2026, hoja {H['pag'] + 1:02d}, escala 1/{H['escala']}",
                                  capas=calcos(page, rec, tr)))
         if H['muros']:
@@ -1002,6 +1011,8 @@ def importar(pdf, depurar=None):
     return dict(formato='plano-cole', version=1,
                 centro=dict(nombre='CEIPSO Filósofo Séneca', norte=-71),
                 creado=date.today().isoformat(),
+                sitio=SITIO,
+                capasAnotacion=[dict(id='a1', nombre='Anotaciones', visible=True)],
                 edificios=list(edificios.values()))
 
 

@@ -163,12 +163,18 @@ export function instalarInteraccion(app) {
   app.tocar = tocar;
 
   // ------------------------------------------------------------------ eventos de puntero
+  const tipos = new Map();
   svg.addEventListener('pointerdown', (e) => {
-    svg.setPointerCapture(e.pointerId);
+    // la palma apoyada mientras se escribe con el lápiz no cuenta
+    if (e.pointerType === 'touch' && gesto?.tipo === 'anotar' && gesto.lapiz) return;
+    if (e.pointerType === 'pen') for (const [id, t] of tipos) if (t === 'touch') { punteros.delete(id); tipos.delete(id); }
+    try { svg.setPointerCapture(e.pointerId); } catch { /* puntero ya liberado */ }
     punteros.set(e.pointerId, local(e));
+    tipos.set(e.pointerId, e.pointerType);
     if (punteros.size === 2) {
-      // pellizco: cancela cualquier arrastre en curso
+      // pellizco: cancela cualquier arrastre o trazo en curso
       if (gesto?.tipo === 'arrastre' && gesto.cambiado) app.deshacer(true);
+      if (gesto?.tipo === 'anotar') app.anotar.cancelar();
       pulsado = null;
       const [a, b] = [...punteros.values()];
       gesto = { tipo: 'pellizco', d: dist(a, b), c: mul(add(a, b), 0.5) };
@@ -179,6 +185,15 @@ export function instalarInteraccion(app) {
     if (e.button === 1 || espacioPulsado || (e.button === 2 && est.herr === 'sel')) {
       gesto = { tipo: 'pan', ult: s };
       e.preventDefault();
+      return;
+    }
+    if (est.ajuste && e.button === 0) {
+      gesto = { tipo: 'ajuste', ult: aMundo(est.vista, s) };
+      return;
+    }
+    if (est.modo === 'anotar' && est.herr !== 'medir' && app.anotar.quiere(e, punteros.size)) {
+      const r = app.anotar.empezar(e);
+      gesto = { tipo: 'anotar', lapiz: e.pointerType === 'pen', r };
       return;
     }
     if (e.button === 2) {
@@ -210,6 +225,16 @@ export function instalarInteraccion(app) {
       app.pintarVista();
       return;
     }
+    if (gesto?.tipo === 'anotar') {
+      if (punteros.has(e.pointerId)) app.anotar.mover(e);
+      return;
+    }
+    if (gesto?.tipo === 'ajuste') {
+      const w = aMundo(est.vista, s);
+      app.ajustarArrastre(w.x - gesto.ult.x, w.y - gesto.ult.y);
+      gesto.ult = aMundo(est.vista, s);
+      return;
+    }
     if (pulsado && dist(s, pulsado.s) > UMBRAL_ARRASTRE) {
       gesto = empezarArrastre(pulsado);
       pulsado = null;
@@ -222,13 +247,20 @@ export function instalarInteraccion(app) {
   });
 
   const fin = (e) => {
+    if (!punteros.has(e.pointerId)) return;
     punteros.delete(e.pointerId);
+    tipos.delete(e.pointerId);
     if (gesto?.tipo === 'pellizco') {
       if (punteros.size === 0) gesto = null;
       return;
     }
-    if (gesto?.tipo === 'arrastre') gesto.soltar?.();
-    else if (pulsado && e.type === 'pointerup') clic(pulsado, e);
+    if (gesto?.tipo === 'anotar') {
+      if (e.type === 'pointercancel') app.anotar.cancelar(); else app.anotar.terminar();
+    } else if (gesto?.tipo === 'arrastre') {
+      gesto.soltar?.();
+      est.arrastrando = false;
+      app.pintarSobre();
+    } else if (pulsado && e.type === 'pointerup') clic(pulsado, e);
     gesto = null;
     pulsado = null;
   };
@@ -236,14 +268,19 @@ export function instalarInteraccion(app) {
   svg.addEventListener('pointercancel', fin);
   svg.addEventListener('contextmenu', (e) => e.preventDefault());
   svg.addEventListener('dblclick', (e) => {
+    if (est.modo === 'anotar') { app.anotar.editarTexto(aMundo(est.vista, local(e))); return; }
     if (est.herr === 'muro') { terminar(); return; }
     const t = tocar(local(e));
-    if (t?.tipo === 'espacio' || t?.tipo === 'nota') app.enfocarPanel();
+    if (est.modo === 'editar' && (t?.tipo === 'espacio' || t?.tipo === 'nota')) app.enfocarPanel();
+  });
+  svg.addEventListener('pointerleave', () => {
+    if (est.hover) { est.hover = null; app.pintarHover(); }
   });
 
   // ------------------------------------------------------------------ teclado
   window.addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea, select, [contenteditable]')) return;
+    if (est.modo === '3d' && !(e.ctrlKey || e.metaKey)) return;
     if (e.code === 'Space') { espacioPulsado = true; svg.classList.add('mano'); e.preventDefault(); return; }
     const t = est.temp;
     if (est.herr === 'muro' && t.cadena?.length && /^[\d.,]$/.test(e.key)) {
@@ -253,8 +290,13 @@ export function instalarInteraccion(app) {
       t.tecleado = t.tecleado.slice(0, -1); app.pintarSobre(); return;
     }
     if (est.herr === 'muro' && t.tecleado && e.key === 'Enter') { colocarTecleado(); return; }
-    if (e.key === 'Escape') { if (!terminar()) app.seleccionar(null); return; }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && est.sel) { app.borrarSeleccion(); e.preventDefault(); return; }
+    if (e.key === 'Escape') {
+      if (est.ajuste) { app.terminarAjuste(false); return; }
+      if (est.anotSel) { est.anotSel = null; app.pintar(); app.pintarBarraAnot(); return; }
+      if (!terminar()) app.seleccionar(null);
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && (est.sel || est.anotSel)) { app.borrarSeleccion(); e.preventDefault(); return; }
     if (e.ctrlKey || e.metaKey) {
       const k = e.key.toLowerCase();
       if (k === 'z' && !e.shiftKey) { app.deshacer(); e.preventDefault(); }
@@ -265,7 +307,7 @@ export function instalarInteraccion(app) {
       return;
     }
     const atajos = { v: 'sel', m: 'muro', p: 'puerta', w: 'ventana', h: 'paso', e: 'espacio', d: 'medir', c: 'pilar', n: 'nota' };
-    if (atajos[e.key.toLowerCase()] && !e.altKey) { app.herramienta(atajos[e.key.toLowerCase()]); return; }
+    if (atajos[e.key.toLowerCase()] && !e.altKey && est.modo !== 'anotar') { app.herramienta(atajos[e.key.toLowerCase()]); return; }
     if (e.key === 'f' || e.key === 'F') app.encuadrar();
     if (e.key === '+' || e.key === '=') zoomEn({ x: svg.clientWidth / 2, y: svg.clientHeight / 2 }, 1.25);
     if (e.key === '-') zoomEn({ x: svg.clientWidth / 2, y: svg.clientHeight / 2 }, 0.8);
@@ -296,9 +338,17 @@ export function instalarInteraccion(app) {
       const m = M.muroCerca(app.planta(), w, tolM(10));
       t.snap = m ? { ...m.q, tipo: 'muro' } : null;
       app.pintarSobre();
-    } else {
+    } else if (est.modo !== 'anotar' && !est.ajuste) {
       const toque = tocar(s);
       svg.dataset.sobre = toque ? toque.tipo : '';
+      // resalte de muros y salas al pasar el ratón
+      let h = toque && (toque.tipo === 'muro' || toque.tipo === 'espacio') ? { tipo: toque.tipo, id: toque.id } : null;
+      if (est.modo === 'ver') {
+        const sala = Object.entries(app.info.salas).find(([, sa]) => sa && caraEn([sa.cara], w));
+        h = sala ? { tipo: 'espacio', id: sala[0] } : null;
+        svg.dataset.sobre = h ? 'espacio' : '';
+      }
+      if (h?.tipo !== est.hover?.tipo || h?.id !== est.hover?.id) { est.hover = h; app.pintarHover(); }
     }
   }
 
@@ -310,8 +360,20 @@ export function instalarInteraccion(app) {
     const herr = est.bloqueado && est.herr !== 'medir' ? 'sel' : est.herr;
     const t = est.temp;
 
+    if (est.modo === 'anotar' && herr !== 'medir') {
+      // con el dedo (si solo dibuja el lápiz) se pueden abrir las notas
+      app.seleccionar(pul.toque?.tipo === 'nota' ? { tipo: 'nota', id: pul.toque.id } : null);
+      return;
+    }
     if (herr === 'sel') {
-      app.seleccionar(pul.toque ? { tipo: pul.toque.tipo, id: pul.toque.id } : null);
+      const toque = pul.toque;
+      // en Ver, tocar un muro o una puerta enseña la sala de al lado: es lo que interesa al consultar
+      if (est.modo === 'ver' && toque && toque.tipo !== 'espacio' && toque.tipo !== 'nota') {
+        const sala = Object.entries(app.info.salas).find(([, s]) => s && caraEn([s.cara], w));
+        app.seleccionar(sala ? { tipo: 'espacio', id: sala[0] } : { tipo: toque.tipo, id: toque.id });
+        return;
+      }
+      app.seleccionar(toque ? { tipo: toque.tipo, id: toque.id } : null);
       return;
     }
     if (herr === 'muro') {
@@ -437,6 +499,7 @@ export function instalarInteraccion(app) {
     let cambiado = false;
     const marcar = () => { if (!cambiado) { app.antes(); cambiado = true; g.cambiado = true; } };
     const g = { tipo: 'arrastre', cambiado: false };
+    est.arrastrando = true;
 
     if (toque.tipo === 'nodo') {
       const nid = toque.id;

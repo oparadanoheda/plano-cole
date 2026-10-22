@@ -52,6 +52,15 @@ export const CSS_PLANO = `
 .escala rect { fill: rgba(255, 255, 255, .92); stroke: #e3e1da; }
 .escala path { stroke: #374151; stroke-width: 1.5; fill: none; }
 .escala text { font: 600 11.5px system-ui, sans-serif; fill: #374151; }
+.r-grupo { font: 600 11px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; fill: #2a5bd7; }
+.hover-muro { fill: rgba(42, 91, 215, .10); stroke: #2a5bd7; stroke-width: 1.2; stroke-opacity: .55; vector-effect: non-scaling-stroke; pointer-events: none; }
+.hover-espacio { fill: rgba(42, 91, 215, .07); stroke: #2a5bd7; stroke-width: 1.2; stroke-opacity: .4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.tinta.rotulador { fill: none; stroke-linecap: round; stroke-linejoin: round; mix-blend-mode: multiply; }
+.tinta-texto { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-weight: 600; }
+.sel-anot { fill: none; stroke: #2a5bd7; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.con-satelite .espacios path { opacity: .55; }
+.con-satelite .rej-menor, .con-satelite .rej-mayor { stroke-opacity: .25; }
+.contexto { opacity: .9; }
 .letra-nodo { font: 700 11px system-ui, sans-serif; fill: #2457d6; text-anchor: middle; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
 .suelto { fill: rgba(220, 38, 38, .12); stroke: #dc2626; stroke-width: 1.8; }
 `;

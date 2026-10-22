@@ -9,8 +9,13 @@
 //                            {id, tipo, pos, ancho, lado, bisagra}]} },
 //             pilares:   [ {x, y, an, al} ],
 //             espacios:  { id: {nombre, x, y, uso, grupo, notas} },   // x,y = punto semilla
-//             elementos: { id: {tipo: 'nota', x, y, texto} },
+//             elementos: { id: {tipo: 'nota', x, y, texto, capa} },
+//             anotaciones: [ {id, capa, tipo: 'trazo'|'texto'|'flecha', herr, color, ancho, puntos | x,y,texto} ],
+//             colocacion: {x, y, giro},   // de coordenadas de la planta a las del sitio
+//             altura,                      // metros de suelo a suelo (para el 3D)
 //             calco:     { origen, capas: {arquitectura|pci|evacuacion|sectores: [trazados]} } } ] } ],
+//     sitio: { ancla: {x, y, lat, lon}, rumbo },   // georreferencia: rumbo = hacia dónde mira el «arriba» del plano
+//     capasAnotacion: [ {id, nombre, visible} ],
 //     versiones: [ {id, nombre, fecha, plantas: {plantaId: contenido editable}} ] }
 //
 // En una abertura, «pos» es la distancia del centro al nodo a; «lado» ±1 es hacia
@@ -42,12 +47,16 @@ export function documentoVacio() {
     formato: FORMATO, version: 1, centro: { nombre: 'Mi centro', norte: 0 },
     creado: new Date().toISOString().slice(0, 10),
     edificios: [{ id: nuevoId('b'), nombre: 'Edificio', plantas: [plantaVacia('Planta baja', 0)] }],
+    capasAnotacion: [{ id: 'a1', nombre: 'Anotaciones', visible: true }],
     versiones: [],
   };
 }
 
-export function plantaVacia(nombre, nivel) {
-  return { id: nuevoId('p'), nombre, nivel, nodos: {}, muros: {}, pilares: [], espacios: {}, elementos: {}, calco: null };
+export function plantaVacia(nombre, nivel, colocacion = { x: 0, y: 0, giro: 0 }) {
+  return {
+    id: nuevoId('p'), nombre, nivel, nodos: {}, muros: {}, pilares: [], espacios: {}, elementos: {},
+    anotaciones: [], colocacion: { ...colocacion }, altura: 3.2, calco: null,
+  };
 }
 
 /** Comprueba y completa un documento leído de archivo. Lanza un error legible si no vale. */
@@ -56,10 +65,19 @@ export function normalizar(doc) {
   doc.edificios ||= [];
   doc.versiones ||= [];
   doc.centro ||= { nombre: '', norte: 0 };
+  doc.capasAnotacion ||= [];
+  if (!doc.capasAnotacion.length) doc.capasAnotacion.push({ id: 'a1', nombre: 'Anotaciones', visible: true });
+  const capa0 = doc.capasAnotacion[0].id;
   for (const ed of doc.edificios) {
     ed.plantas ||= [];
+    ed.exterior ??= ed.id === 'exterior';
     for (const p of ed.plantas) {
       p.nodos ||= {}; p.muros ||= {}; p.pilares ||= []; p.espacios ||= {}; p.elementos ||= {};
+      p.anotaciones ||= [];
+      p.colocacion ||= { x: 0, y: 0, giro: 0 };
+      p.altura ||= 3.2;
+      for (const n of Object.values(p.elementos)) n.capa ||= capa0;
+      for (const a of p.anotaciones) a.capa ||= capa0;
       for (const [id, m] of Object.entries(p.muros)) {
         if (!p.nodos[m.a] || !p.nodos[m.b] || m.a === m.b) { delete p.muros[id]; continue; }
         m.aberturas ||= [];
@@ -87,11 +105,30 @@ export function murosDeNodo(p, nid) {
 
 /** Contenido editable de una planta (sin el calco), para historial y versiones. */
 export function contenido(p) {
-  return JSON.stringify({ nodos: p.nodos, muros: p.muros, pilares: p.pilares, espacios: p.espacios, elementos: p.elementos });
+  return JSON.stringify({ nodos: p.nodos, muros: p.muros, pilares: p.pilares, espacios: p.espacios, elementos: p.elementos, anotaciones: p.anotaciones });
 }
 
 export function restaurar(p, json) {
-  Object.assign(p, JSON.parse(json));
+  const c = JSON.parse(json);
+  c.anotaciones ||= [];
+  Object.assign(p, c);
+}
+
+// ---------------------------------------------------------------------------
+// Colocación: coordenadas de una planta <-> coordenadas del sitio (el marco del edificio principal)
+// ---------------------------------------------------------------------------
+
+export function aSitio(p, pt) {
+  const c = p.colocacion || { x: 0, y: 0, giro: 0 };
+  const g = ((c.giro || 0) * Math.PI) / 180;
+  return { x: c.x + pt.x * Math.cos(g) - pt.y * Math.sin(g), y: c.y + pt.x * Math.sin(g) + pt.y * Math.cos(g) };
+}
+
+export function deSitio(p, pt) {
+  const c = p.colocacion || { x: 0, y: 0, giro: 0 };
+  const g = ((c.giro || 0) * Math.PI) / 180;
+  const dx = pt.x - c.x, dy = pt.y - c.y;
+  return { x: dx * Math.cos(g) + dy * Math.sin(g), y: -dx * Math.sin(g) + dy * Math.cos(g) };
 }
 
 // ---------------------------------------------------------------------------

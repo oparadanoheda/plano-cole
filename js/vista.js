@@ -90,8 +90,9 @@ export function geometriaMuro(planta, mid, porNodo) {
     libres = r;
   }
   const P = (s, d) => add(add(A, mul(u, s)), mul(n, d));
-  const tramos = libres.filter(([a, b]) => b - a > 0.001).map(([a, b]) => [P(a, -h), P(b, -h), P(b, h), P(a, h)]);
-  return { m, A, B, L, u, n, h, P, tramos, contorno: [P(-ea, -h), P(L + eb, -h), P(L + eb, h), P(-ea, h)] };
+  libres = libres.filter(([a, b]) => b - a > 0.001);
+  const tramos = libres.map(([a, b]) => [P(a, -h), P(b, -h), P(b, h), P(a, h)]);
+  return { m, A, B, L, u, n, h, P, tramos, libres, huecos, ea, eb, contorno: [P(-ea, -h), P(L + eb, -h), P(L + eb, h), P(-ea, h)] };
 }
 
 function simboloAbertura(G, o) {
@@ -128,6 +129,10 @@ function simboloAbertura(G, o) {
 // ---------------------------------------------------------------------------
 
 export function pintarModelo(g, planta, info, capas) {
+  g.innerHTML = htmlModelo(planta, info, capas);
+}
+
+export function htmlModelo(planta, info, capas) {
   const out = [];
   if (capas.espacios) {
     out.push('<g class="espacios">');
@@ -156,7 +161,18 @@ export function pintarModelo(g, planta, info, capas) {
   out.push('<g class="pilares">');
   for (const pl of planta.pilares) out.push(`<rect class="pilar" x="${f(pl.x)}" y="${f(pl.y)}" width="${f(pl.an)}" height="${f(pl.al)}"/>`);
   out.push('</g>');
-  g.innerHTML = out.join('');
+  return out.join('');
+}
+
+/** Resalte suave de lo que hay bajo el ratón. */
+export function pintarHover(g, planta, hover, info) {
+  if (!hover || !planta) { g.innerHTML = ''; return; }
+  if (hover.tipo === 'muro' && planta.muros[hover.id]) {
+    const G = geometriaMuro(planta, hover.id, indicePorNodo(planta));
+    g.innerHTML = `<path class="hover-muro" d="M${G.contorno.map(pt).join('L')}Z"/>`;
+  } else if (hover.tipo === 'espacio' && info.salas[hover.id]) {
+    g.innerHTML = `<path class="hover-espacio" d="M${info.salas[hover.id].cara.pts.map(pt).join('L')}Z"/>`;
+  } else g.innerHTML = '';
 }
 
 /** Resalte de la selección (en coordenadas de mundo). */
@@ -252,16 +268,18 @@ export function pintarSobre(g, planta, est, info, w, h) {
       if (s.x < -100 || s.y < -40 || s.x > w + 100 || s.y > h + 40) continue;
       const sala = info.salas[id];
       const sel = est.sel?.tipo === 'espacio' && est.sel.id === id ? ' sel' : '';
-      const sup = sala ? fmtM2(sala.util) : hayMuros ? 'sin cerrar' : '';
-      out.push(`<g class="rotulo${sel}${sala ? '' : ' abierto'}" transform="translate(${f(s.x)} ${f(s.y)})">` +
-        `<text class="r-nombre" y="${v.z > 9 && sup ? -2 : 4}">${esc(e.nombre)}</text>` +
-        (v.z > 9 && sup ? `<text class="r-sup" y="12">${sup}</text>` : '') + '</g>');
+      const sup = sala ? fmtM2(sala.util) : hayMuros && !est.bloqueado ? 'sin cerrar' : '';
+      const lineas = [`<tspan class="r-nombre" x="0" dy="0">${esc(e.nombre)}</tspan>`];
+      if (v.z > 9 && e.grupo) lineas.push(`<tspan class="r-grupo" x="0" dy="13">${esc(e.grupo)}</tspan>`);
+      if (v.z > 9 && sup) lineas.push(`<tspan class="r-sup" x="0" dy="13">${sup}</tspan>`);
+      out.push(`<g class="rotulo${sel}${sala ? '' : ' abierto'}" transform="translate(${f(s.x)} ${f(s.y - (lineas.length - 1) * 6.5 + 4)})">` +
+        `<text>${lineas.join('')}</text></g>`);
     }
     out.push('</g>');
   }
   // notas
   for (const [id, n] of Object.entries(planta.elementos)) {
-    if (n.tipo !== 'nota') continue;
+    if (n.tipo !== 'nota' || (est.capasAnotVisibles && !est.capasAnotVisibles.has(n.capa))) continue;
     const s = aPantalla(v, n);
     const sel = est.sel?.tipo === 'nota' && est.sel.id === id ? ' sel' : '';
     out.push(`<g class="nota${sel}" transform="translate(${f(s.x)} ${f(s.y)})"><circle r="9"/><text y="4">!</text>` +
