@@ -19,7 +19,8 @@ index.html              interfaz
 css/app.css             estilos de la interfaz
 js/main.js              arranque, estado, archivo, exportar e imprimir
 js/modelo.js            documento y operaciones (nodos, muros, aberturas, espacios)
-js/espacios.js          detección de salas (caras del grafo de muros) y superficie útil
+js/espacios.js          detección de salas (caras del grafo de muros), superficie útil y huella de
+                        cada planta para los forjados del 3D (rejilla, cierre de huecos, patios)
 js/vista.js             dibujo SVG (mundo en metros + capa de pantalla)
 js/herramientas.js      ratón, dedo y lápiz: zoom, selección, arrastres, dibujo, ajustes
 js/panel.js             panel de propiedades, capas y versiones

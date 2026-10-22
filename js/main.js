@@ -808,9 +808,13 @@ function pintarBarra3D() {
   for (const ed of app.doc.edificios) if (!ed.exterior) for (const p of ed.plantas) niveles.add(p.nivel);
   const ns = [...niveles].sort((a, b) => a - b);
   const op = vista3d.op;
+  if (Number.isFinite(op.hasta) && !ns.includes(op.hasta)) op.hasta = Infinity;
+  const todas = !Number.isFinite(op.hasta);
+  // una planta: esa y las de debajo, o (con «Solo esa») únicamente esa
   $('#barra-3d').innerHTML = `
     <span class="etq">Plantas</span>
-    <div class="segmentos">${ns.map((n) => `<button data-hasta="${n}" class="${op.hasta === n ? 'activo' : ''}">${n === ns[ns.length - 1] ? 'Todas' : 'Hasta ' + etiquetaNivel(n).toLowerCase()}</button>`).join('')}</div>
+    <div class="segmentos">${ns.map((n) => `<button data-hasta="${n}" class="${op.hasta === n ? 'activo' : ''}" title="${op.solo ? 'Solo esta planta' : 'Esta planta y las de debajo'}">${etiquetaNivel(n)}</button>`).join('')}<button data-hasta="Infinity" class="${todas ? 'activo' : ''}">Todas</button></div>
+    <label class="interruptor" title="Ver únicamente la planta elegida, sin las de debajo"><input type="checkbox" data-op3d="solo" ${op.solo ? 'checked' : ''} ${todas ? 'disabled' : ''}> Solo esa</label>
     <label class="interruptor"><input type="checkbox" data-op3d="separar" ${op.separar ? 'checked' : ''}> Separar</label>
     <label class="interruptor"><input type="checkbox" data-op3d="foto" ${op.foto ? 'checked' : ''}> Foto aérea</label>
     <label class="interruptor"><input type="checkbox" data-op3d="nombres" ${op.nombres ? 'checked' : ''}> Nombres</label>
@@ -818,13 +822,16 @@ function pintarBarra3D() {
     <button class="btn-ic" data-v3d="cenital" title="Vista desde arriba"><svg class="ic"><use href="#i-abajo"/></svg></button>
     <button class="btn-ic" data-v3d="encuadrar" title="Vista en perspectiva"><svg class="ic"><use href="#i-cubo"/></svg></button>
     <button class="btn-ic" data-v3d="captura" title="Guardar imagen"><svg class="ic"><use href="#i-camara"/></svg></button>`;
-  if (!Number.isFinite(op.hasta) || !ns.includes(op.hasta)) op.hasta = ns[ns.length - 1];
-  $('#barra-3d').querySelectorAll('[data-hasta]').forEach((b) => b.classList.toggle('activo', +b.dataset.hasta === op.hasta));
 }
 $('#barra-3d').addEventListener('click', async (e) => {
   const b = e.target.closest('button');
   if (!b || !vista3d) return;
-  if (b.dataset.hasta !== undefined) { vista3d.op.hasta = +b.dataset.hasta; pintarBarra3D(); await vista3d.construir(); }
+  if (b.dataset.hasta !== undefined) {
+    vista3d.op.hasta = +b.dataset.hasta;
+    pintarBarra3D();
+    await vista3d.construir();
+    vista3d.seguirAltura();
+  }
   else if (b.dataset.v3d === 'cenital') vista3d.encuadrar(true);
   else if (b.dataset.v3d === 'encuadrar') vista3d.encuadrar(false);
   else if (b.dataset.v3d === 'captura') exportar3D();
@@ -833,7 +840,9 @@ $('#barra-3d').addEventListener('change', async (e) => {
   const k = e.target.dataset.op3d;
   if (!k || !vista3d) return;
   vista3d.op[k] = e.target.checked;
+  if (k === 'solo') pintarBarra3D();
   await vista3d.construir(k === 'separar');
+  if (k === 'solo') vista3d.seguirAltura();
 });
 async function exportar3D() {
   if (!vista3d) { app.aviso('Abre primero el modo 3D.'); return; }

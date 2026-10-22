@@ -1,8 +1,8 @@
-// Modo 3D: los muros se levantan con sus puertas y ventanas, las plantas se apilan y
-// el suelo es la foto aérea. Usa Three.js (incluido en vendor/, funciona sin conexión).
-// Se carga solo al entrar en el modo 3D.
+// Modo 3D: los muros se levantan con sus puertas y ventanas, cada planta tiene su forjado, las
+// plantas se apilan (todas, hasta una o solo una) y el suelo es la foto aérea. Usa Three.js
+// (incluido en vendor/, funciona sin conexión). Se carga solo al entrar en el modo 3D.
 
-import { salas } from './espacios.js';
+import { salas, huellasEdificio } from './espacios.js';
 import { geometriaMuro, indicePorNodo, COLOR_USO } from './vista.js';
 import { aSitio } from './modelo.js';
 import { mosaicoSitio } from './satelite.js';
@@ -60,7 +60,8 @@ export class Vista3D {
   constructor(app, contenedor) {
     this.app = app;
     this.cont = contenedor;
-    this.op = { hasta: 99, separar: false, foto: true, nombres: true, red: true };
+    // hasta: la planta (nivel) hasta la que se ve, Infinity = todas; solo: únicamente esa planta
+    this.op = { hasta: Infinity, solo: false, separar: false, foto: true, nombres: true, red: true };
     this.activo = false;
     this.suelos = [];
     this.fotoCache = null;
@@ -159,13 +160,15 @@ export class Vista3D {
     const grupo = this.grupo = new T.Group();
     this.escena.add(grupo);
     this.suelos = [];
-    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity, yMax = 0;
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity, yMin = Infinity, yMax = 0;
     const ext = (p) => { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.y); z1 = Math.max(z1, p.y); };
     const y0s = new Map(); // altura del suelo de cada planta dibujada (para la red)
+    const losas = new Prismas();
 
     for (const ed of app.doc.edificios) {
       if (ed.exterior) continue;
       const pls = [...ed.plantas].sort((a, b) => a.nivel - b.nivel);
+      const huellas = huellasEdificio(ed.plantas);
       // altura de cada planta: la baja en 0, las de arriba sobre la anterior
       let base = 0;
       const bases = new Map();
@@ -175,11 +178,16 @@ export class Vista3D {
       for (let i = i0 - 1; i >= 0; i--) { base -= pls[i].altura || 3.2; bases.set(pls[i].id, base); }
 
       for (const p of pls) {
-        if (p.nivel > this.op.hasta) continue;
+        if (this.op.solo && Number.isFinite(this.op.hasta) ? p.nivel !== this.op.hasta : p.nivel > this.op.hasta) continue;
         const y0 = bases.get(p.id) + (this.op.separar ? Math.max(0, p.nivel) * 3.5 : 0);
         y0s.set(p.id, y0);
+        yMin = Math.min(yMin, y0);
         const alto = (p.altura || 3.2) - LOSA;
         const S = (q) => aSitio(p, q);
+        // forjado: la huella de la planta (y el techo de la de debajo), con su grosor
+        for (const r of huellas.get(p.id) || []) {
+          losas.prisma([{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }].map(S), y0 - LOSA, y0 + 0.01);
+        }
         const info = salas(p);
         const muros = new Prismas(), vidrios = new Prismas(), pilares = new Prismas();
         const porNodo = indicePorNodo(p);
@@ -227,7 +235,6 @@ export class Vista3D {
           grupo.add(m);
           return m;
         };
-        for (const c of info.caras.exteriores || []) plano(c.pts, y0 + 0.005, '#d6d2c6');
         for (const c of info.caras) {
           const esp = espDeCara.get(c);
           const uso = esp ? p.espacios[esp].uso : null;
@@ -259,9 +266,16 @@ export class Vista3D {
         yMax = Math.max(yMax, y0 + alto);
       }
     }
+    if (losas.pos.length) {
+      const m = new T.Mesh(losas.geometria(), this.material('#d3cfc5'));
+      m.castShadow = true;
+      m.receiveShadow = true;
+      grupo.add(m);
+    }
     if (this.op.red && app.doc.red) this.red3D(grupo, y0s);
     if (!Number.isFinite(x0)) { x0 = z0 = -10; x1 = z1 = 10; }
-    this.caja = { x0, x1, z0, z1, yMax };
+    if (!Number.isFinite(yMin)) yMin = 0;
+    this.caja = { x0, x1, z0, z1, yMin, yMax };
 
     // suelo: foto aérea o gris
     await this.suelo();
@@ -397,9 +411,24 @@ export class Vista3D {
     return s;
   }
 
+  /** Altura a la que mira la cámara: algo por encima del suelo de lo que se ve. */
+  alturaObjetivo() {
+    const { yMin, yMax } = this.caja;
+    return yMin + (yMax - yMin) * 0.35;
+  }
+
+  /** Al cambiar las plantas que se ven, la cámara sube o baja con ellas, sin girar ni acercarse. */
+  seguirAltura() {
+    const d = this.alturaObjetivo() - this.controles.target.y;
+    if (Math.abs(d) < 0.01) return;
+    this.controles.target.y += d;
+    this.camara.position.y += d;
+    this.controles.update();
+  }
+
   encuadrar(cenital = false) {
-    const { x0, x1, z0, z1, yMax } = this.caja;
-    const c = new T.Vector3((x0 + x1) / 2, yMax * 0.35, (z0 + z1) / 2);
+    const { x0, x1, z0, z1 } = this.caja;
+    const c = new T.Vector3((x0 + x1) / 2, this.alturaObjetivo(), (z0 + z1) / 2);
     const R = Math.max(x1 - x0, z1 - z0, 20);
     this.controles.target.copy(c);
     if (cenital) this.camara.position.set(c.x, R * 1.9, c.z + 0.01);

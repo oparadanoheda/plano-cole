@@ -196,6 +196,8 @@ body:not(.modo-editar):not(.modo-red) .herramientas { display: none; }
 .interruptor input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
 .interruptor input:checked { background: var(--acento); }
 .interruptor input:checked::after { transform: translateX(13px); }
+.interruptor input:disabled { cursor: default; }
+.interruptor:has(input:disabled) { opacity: .5; cursor: default; }
 
 .estado {
   position: absolute; left: 0; right: 0; bottom: 0; height: 30px; padding: 0 12px calc(env(safe-area-inset-bottom) * .5);
