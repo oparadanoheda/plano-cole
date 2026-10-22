@@ -2,7 +2,7 @@
 // Funciona igual con ratón, con el dedo y con el Apple Pencil (Pointer Events).
 
 import { dist, sub, add, mul, unit, proyectar, distSegmento, redondear, leerNum } from './geo.js';
-import { aMundo, aPantalla } from './vista.js';
+import { aMundo, aPantalla, notaVisible } from './vista.js';
 import * as M from './modelo.js';
 import { caraEn } from './espacios.js';
 
@@ -121,7 +121,7 @@ export function instalarInteraccion(app) {
       }
     }
     for (const [id, n] of Object.entries(p.elementos)) {
-      if (dist(aPantalla(v, n), s) < 12) return { tipo: 'nota', id };
+      if (notaVisible(n, est) && dist(aPantalla(v, n), s) < 12) return { tipo: 'nota', id };
     }
     if (est.capas.rotulos && v.z > 3) {
       for (const [id, e] of Object.entries(p.espacios)) {
@@ -175,6 +175,7 @@ export function instalarInteraccion(app) {
       // pellizco: cancela cualquier arrastre o trazo en curso
       if (gesto?.tipo === 'arrastre' && gesto.cambiado) app.deshacer(true);
       if (gesto?.tipo === 'anotar') app.anotar.cancelar();
+      if (est.arrastrando) { est.arrastrando = false; app.estado(''); }
       pulsado = null;
       const [a, b] = [...punteros.values()];
       gesto = { tipo: 'pellizco', d: dist(a, b), c: mul(add(a, b), 0.5) };
@@ -379,7 +380,7 @@ export function instalarInteraccion(app) {
     if (herr === 'muro') {
       const desde = t.cadena?.length ? t.cadena[t.cadena.length - 1] : null;
       const a = ajustar(w, { desde });
-      if (!desde) { t.cadena = [a]; t.inicio = a; app.pintarSobre(); return; }
+      if (!desde) { t.cadena = [a]; t.inicio = a; app.pintarSobre(); app.pintarOpciones(); return; }
       if (dist(a, desde) < 0.02) { terminar(); return; }
       ponerMuro(desde, a);
       const cerrado = t.inicio && dist(a, t.inicio) < 1e-6;
@@ -438,7 +439,7 @@ export function instalarInteraccion(app) {
     if (herr === 'nota') {
       app.antes();
       const id = M.nuevoId('x');
-      p.elementos[id] = { tipo: 'nota', x: w.x, y: w.y, texto: 'Nota' };
+      p.elementos[id] = { tipo: 'nota', x: w.x, y: w.y, texto: 'Nota', capa: app.anotar.capaActiva() };
       app.cambio();
       app.seleccionar({ tipo: 'nota', id });
       app.enfocarPanel();
@@ -478,6 +479,7 @@ export function instalarInteraccion(app) {
     const habia = !!(t.cadena?.length || t.medir);
     est.temp = {};
     app.pintarSobre();
+    if (habia) app.pintarOpciones();
     return habia;
   }
   app.terminar = terminar;

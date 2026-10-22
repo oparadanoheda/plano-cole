@@ -61,33 +61,119 @@ export function plantaVacia(nombre, nivel, colocacion = { x: 0, y: 0, giro: 0 })
 
 /** Comprueba y completa un documento leído de archivo. Lanza un error legible si no vale. */
 export function normalizar(doc) {
-  if (!doc || doc.formato !== FORMATO) throw new Error('No es un archivo de plano (falta «formato: plano-cole»).');
+  if (!doc || typeof doc !== 'object' || doc.formato !== FORMATO) throw new Error('No es un archivo de plano (falta «formato: plano-cole»).');
   doc.edificios ||= [];
   doc.versiones ||= [];
   doc.centro ||= { nombre: '', norte: 0 };
   doc.capasAnotacion ||= [];
+  exigir(Array.isArray(doc.edificios) && Array.isArray(doc.versiones) && Array.isArray(doc.capasAnotacion), 'estructura');
   if (!doc.capasAnotacion.length) doc.capasAnotacion.push({ id: 'a1', nombre: 'Anotaciones', visible: true });
+  for (const c of doc.capasAnotacion) exigir(ID.test(c?.id) && typeof c.nombre === 'string', 'capa de anotaciones');
   const capa0 = doc.capasAnotacion[0].id;
   for (const ed of doc.edificios) {
+    exigir(ID.test(ed?.id) && typeof ed.nombre === 'string', 'edificio');
     ed.plantas ||= [];
     ed.exterior ??= ed.id === 'exterior';
     for (const p of ed.plantas) {
+      exigir(ID.test(p?.id) && typeof p.nombre === 'string' && esNum(p.nivel), 'planta');
       p.nodos ||= {}; p.muros ||= {}; p.pilares ||= []; p.espacios ||= {}; p.elementos ||= {};
       p.anotaciones ||= [];
       p.colocacion ||= { x: 0, y: 0, giro: 0 };
       p.altura ||= 3.2;
-      for (const n of Object.values(p.elementos)) n.capa ||= capa0;
-      for (const a of p.anotaciones) a.capa ||= capa0;
+      exigir(esNum(p.colocacion.x) && esNum(p.colocacion.y) && esNum(p.colocacion.giro || 0) && esNum(p.altura), `${p.nombre}: colocación`);
+      validarContenido(p, capa0, p.nombre);
+      validarCalco(p.calco, p.nombre);
       for (const [id, m] of Object.entries(p.muros)) {
-        if (!p.nodos[m.a] || !p.nodos[m.b] || m.a === m.b) { delete p.muros[id]; continue; }
-        m.aberturas ||= [];
-        for (const o of m.aberturas) o.id ||= nuevoId('h');
-        m.tipo ||= 'tabique';
-        m.estado ||= 'importado';
+        if (!p.nodos[m.a] || !p.nodos[m.b] || m.a === m.b) delete p.muros[id];
       }
     }
   }
+  if (doc.sitio) {
+    const s = doc.sitio;
+    exigir(s.ancla && [s.ancla.x, s.ancla.y, s.ancla.lat, s.ancla.lon, s.rumbo].every(esNum), 'georreferencia');
+  }
+  exigir(typeof (doc.centro.nombre ?? '') === 'string', 'centro');
+  // las versiones guardan el contenido de cada planta en texto: también se comprueba
+  for (const v of doc.versiones) {
+    exigir(ID.test(v?.id) && typeof v.nombre === 'string' && v.plantas && typeof v.plantas === 'object', 'versión');
+    for (const [plId, json] of Object.entries(v.plantas)) {
+      exigir(ID.test(plId) && typeof json === 'string', `versión «${v.nombre}»`);
+      let c;
+      try { c = JSON.parse(json); } catch { exigir(false, `versión «${v.nombre}»`); }
+      for (const k of ['nodos', 'muros', 'espacios', 'elementos']) c[k] ||= {};
+      c.pilares ||= [];
+      c.anotaciones ||= [];
+      validarContenido(c, capa0, `versión «${v.nombre}»`);
+    }
+  }
   return doc;
+}
+
+// ---------------------------------------------------------------------------
+// Validación: un archivo manipulado no debe poder meter código en la página.
+// Los textos se escapan al pintarlos; aquí se comprueban identificadores, colores,
+// trazados y números, que van dentro de atributos.
+// ---------------------------------------------------------------------------
+
+const ID = /^[\w-]{1,64}$/;
+const COLOR = /^#[0-9a-fA-F]{3,8}$/;
+const TRAZADO = /^[MLHVCSQTAZmlhvcsqtaz0-9eE.,\s+-]*$/;
+const esNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const esTextoOpc = (v) => v === undefined || v === null || typeof v === 'string';
+const deLista = (v, lista, def) => (typeof v === 'string' && Object.hasOwn(lista, v) ? v : def);
+const PLUMAS_VALIDAS = { boli: 1, rotulador: 1, lapiz: 1 };
+
+function exigir(cond, que) {
+  if (!cond) throw new Error(`El archivo tiene datos no válidos (${que}). Por seguridad no se abre.`);
+}
+
+/** Comprueba (y completa) el contenido editable de una planta o de una versión. */
+function validarContenido(p, capa0, donde) {
+  exigir(typeof p.nodos === 'object' && typeof p.muros === 'object' && Array.isArray(p.pilares) &&
+    typeof p.espacios === 'object' && typeof p.elementos === 'object' && Array.isArray(p.anotaciones), donde);
+  for (const [id, n] of Object.entries(p.nodos)) exigir(ID.test(id) && esNum(n?.x) && esNum(n?.y), `${donde}: esquina`);
+  for (const [id, m] of Object.entries(p.muros)) {
+    exigir(ID.test(id) && ID.test(m?.a) && ID.test(m.b) && esNum(m.grosor) && esTextoOpc(m.notas), `${donde}: muro`);
+    m.tipo = deLista(m.tipo, TIPOS_MURO, 'tabique');
+    m.estado = deLista(m.estado, ESTADOS_MURO, 'importado');
+    m.aberturas ||= [];
+    exigir(Array.isArray(m.aberturas), `${donde}: aberturas`);
+    for (const o of m.aberturas) {
+      o.id ||= nuevoId('h');
+      exigir(ID.test(o.id) && Object.hasOwn(TIPOS_ABERTURA, o.tipo) && esNum(o.pos) && esNum(o.ancho) &&
+        (o.lado === undefined || o.lado === 1 || o.lado === -1) &&
+        (o.bisagra === undefined || o.bisagra === 'a' || o.bisagra === 'b'), `${donde}: puerta o ventana`);
+    }
+  }
+  for (const pl of p.pilares) exigir([pl?.x, pl?.y, pl?.an, pl?.al].every(esNum), `${donde}: pilar`);
+  for (const [id, e] of Object.entries(p.espacios)) {
+    exigir(ID.test(id) && esNum(e?.x) && esNum(e.y) && typeof e.nombre === 'string' && esTextoOpc(e.grupo) && esTextoOpc(e.notas), `${donde}: sala`);
+    e.uso = deLista(e.uso, USOS, 'otro');
+  }
+  for (const [id, n] of Object.entries(p.elementos)) {
+    n.capa ||= capa0;
+    exigir(ID.test(id) && n.tipo === 'nota' && esNum(n.x) && esNum(n.y) && esTextoOpc(n.texto) && ID.test(n.capa), `${donde}: nota`);
+  }
+  for (const a of p.anotaciones) {
+    a.capa ||= capa0;
+    exigir(ID.test(a?.id) && ID.test(a.capa) && COLOR.test(a.color), `${donde}: anotación`);
+    if (a.tipo === 'texto') exigir([a.x, a.y, a.tam].every(esNum) && typeof a.texto === 'string', `${donde}: texto`);
+    else if (a.tipo === 'flecha') exigir(esNum(a.ancho) && Array.isArray(a.puntos) && a.puntos.length === 4 && a.puntos.every(esNum), `${donde}: flecha`);
+    else exigir(a.tipo === 'trazo' && Object.hasOwn(PLUMAS_VALIDAS, a.herr) && esNum(a.ancho) && Array.isArray(a.puntos) &&
+      a.puntos.length >= 3 && a.puntos.length % 3 === 0 && a.puntos.every(esNum), `${donde}: trazo`);
+  }
+}
+
+function validarCalco(calco, donde) {
+  if (!calco) return;
+  exigir(typeof calco === 'object' && typeof (calco.capas || {}) === 'object', `${donde}: calco`);
+  for (const [capa, lista] of Object.entries(calco.capas || {})) {
+    exigir(['arquitectura', 'pci', 'evacuacion', 'sectores'].includes(capa) && Array.isArray(lista), `${donde}: calco`);
+    for (const t of lista) {
+      exigir(typeof t?.d === 'string' && TRAZADO.test(t.d) && (t.trazo == null || COLOR.test(t.trazo)) &&
+        (t.relleno == null || COLOR.test(t.relleno)) && (t.ancho == null || esNum(t.ancho)), `${donde}: calco`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -199,23 +285,34 @@ export function nodoEn(p, pt, tol) {
   return crearNodo(p, pt.x, pt.y);
 }
 
-/** Inserta un muro de a a b, partiendo los muros que cruza para que el grafo siga siendo plano. */
+/** Inserta un muro de a a b, partiendo los muros que cruza para que el grafo siga siendo plano.
+ *  Las esquinas que ya hay sobre el recorrido se reutilizan: así, si el muro nuevo va por
+ *  encima de uno que ya existe, ese tramo no se duplica. */
 export function insertarMuro(p, a, b, props = {}) {
   const A = p.nodos[a], B = p.nodos[b];
+  const L = dist(A, B);
   const cortes = [];
   for (const [id, m] of Object.entries(p.muros)) {
     if ([m.a, m.b].includes(a) || [m.a, m.b].includes(b)) continue;
     const [C, D] = extremos(p, m);
     const x = cruce(A, B, C, D);
-    if (x && x.t > 1e-3 && x.t < 1 - 1e-3) cortes.push({ id, x });
+    if (x && x.t > 1e-3 && x.t < 1 - 1e-3 && x.u > 1e-3 && x.u < 1 - 1e-3) cortes.push({ t: x.t, id, x });
   }
-  cortes.sort((u, v) => u.x.t - v.x.t);
+  for (const [nid, N] of Object.entries(p.nodos)) {
+    if (nid === a || nid === b || L < 1e-6) continue;
+    const r = proyectar(N, A, B);
+    if (Math.abs(r.d) < 0.005 && r.t > 0.005 && r.t < L - 0.005) cortes.push({ t: r.t / L, nodo: nid });
+  }
+  cortes.sort((u, v) => u.t - v.t);
   const cadena = [a];
   for (const c of cortes) {
+    if (c.nodo) { if (p.nodos[c.nodo] && cadena[cadena.length - 1] !== c.nodo) cadena.push(c.nodo); continue; }
     const m = p.muros[c.id];
     if (!m) continue;
-    const [C] = extremos(p, m);
-    cadena.push(partirMuro(p, c.id, dist(C, c.x)));
+    const [C, D] = extremos(p, m);
+    const x = cruce(A, B, C, D);
+    if (!x) continue;
+    cadena.push(partirMuro(p, c.id, dist(C, x)));
   }
   cadena.push(b);
   const ids = [];
@@ -243,7 +340,8 @@ export function limpiarNodo(p, nid) {
   if (ms.length === 0) { delete p.nodos[nid]; return; }
   if (ms.length !== 2) return;
   const [m1, m2] = ms.map((id) => p.muros[id]);
-  if (Math.abs(m1.grosor - m2.grosor) > 0.005 || m1.tipo !== m2.tipo) return;
+  // solo se funden si son el mismo muro: mismo grosor, tipo y estado (medido, importado…)
+  if (Math.abs(m1.grosor - m2.grosor) > 0.005 || m1.tipo !== m2.tipo || m1.estado !== m2.estado) return;
   const o1 = m1.a === nid ? m1.b : m1.a;
   const o2 = m2.a === nid ? m2.b : m2.a;
   const N = p.nodos[nid], P1 = p.nodos[o1], P2 = p.nodos[o2];

@@ -27,7 +27,7 @@ const est = {
   },
   bloqueado: true, orto: true, paso: 0.05,
   grosor: 0.1, tipoMuro: 'tabique', estadoNuevo: 'medido', ancla: 'a',
-  anot: { herr: 'boli', color: '#d92d20', grosor: 1, capa: null, soloLapiz: false, hayLapiz: false },
+  anot: { herr: 'boli', color: '#d92d20', grosor: 1, capa: null, soloLapiz: false, lapizVisto: false },
   anotSel: null, ajuste: null, capasAnotVisibles: new Set(),
   edId: null, plId: null,
 };
@@ -376,7 +376,7 @@ $('#barra-contexto').addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------- modos
 const PISTAS = {
   sel: 'Toca un muro, una puerta o una sala. Arrastra para moverlos; con dos dedos o la rueda, zoom.',
-  muro: 'Toca para empezar y ve tocando esquinas. Escribe una medida (6,40) e Intro para fijar el largo. Doble toque o Esc para terminar.',
+  muro: 'Toca para empezar y ve tocando esquinas. Con teclado, escribe una medida (6,40) e Intro. Para acabar: «Terminar», doble toque o Esc.',
   puerta: 'Toca un muro para poner una puerta. Abrirá hacia el lado donde toques.',
   ventana: 'Toca un muro para poner una ventana.',
   paso: 'Toca un muro para abrir un paso sin puerta.',
@@ -448,10 +448,16 @@ function pintarOpciones() {
       <label class="interruptor"><input type="checkbox" data-op="orto" ${est.orto ? 'checked' : ''}> Ortogonal</label>`;
   }
   html += `<label class="interruptor"><input type="checkbox" data-op="paso" ${est.paso ? 'checked' : ''}> 5 cm</label>`;
+  // mientras se dibuja una cadena de muros, un botón para acabarla (en el iPad no hay Esc)
+  if (h === 'muro' && est.temp.cadena?.length) html += '<button class="btn primario" data-op-terminar style="height:32px">Terminar</button>';
   o.innerHTML = html;
   o.hidden = false;
 }
+app.pintarOpciones = pintarOpciones;
 
+$('#opciones').addEventListener('click', (e) => {
+  if (e.target.closest('[data-op-terminar]')) app.terminar();
+});
 $('#opciones').addEventListener('change', (e) => {
   const k = e.target.dataset.op;
   if (!k) return;
@@ -487,10 +493,12 @@ function pintarPaleta() {
     <span class="sep-v"></span>
     <select data-anot-capa aria-label="Capa donde se dibuja">${capas.map((c) => `<option value="${c.id}"${c.id === a.capa ? ' selected' : ''}>${esc(c.nombre)}</option>`).join('')}<option value="__nueva">+ Nueva capa…</option></select>
     <label class="interruptor" title="Con el Apple Pencil: el dedo mueve el plano en vez de dibujar"><input type="checkbox" data-anot-solo ${a.soloLapiz ? 'checked' : ''}> Solo el lápiz dibuja</label>
+    ${esTextoSel() ? '<button class="btn" data-anot-editar style="height:36px">Editar texto</button>' : ''}
     ${est.anotSel ? '<button class="btn peligro" data-anot-borrar style="height:36px">Borrar</button>' : ''}`;
   pal.hidden = false;
 }
 app.pintarBarraAnot = pintarPaleta;
+const esTextoSel = () => !!est.anotSel && app.planta()?.anotaciones.some((x) => x.id === est.anotSel && x.tipo === 'texto');
 
 $('#paleta').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -500,6 +508,7 @@ $('#paleta').addEventListener('click', (e) => {
   else if (b.dataset.anotColor) a.color = b.dataset.anotColor;
   else if (b.dataset.anotGrosor) a.grosor = +b.dataset.anotGrosor;
   else if ('anotBorrar' in b.dataset) { anotador.borrarSeleccion(); }
+  else if ('anotEditar' in b.dataset) { anotador.editarSeleccion(); return; }
   pintarPaleta();
   app.guardarPreferencias();
 });
@@ -608,10 +617,10 @@ app.ajustarArrastre = (dx, dy) => {
     app.doc.sitio.ancla.x += d.x;
     app.doc.sitio.ancla.y += d.y;
   } else {
-    for (const q of app.edificio().plantas) { q.colocacion.x -= d.x; q.colocacion.y -= d.y; }
-    // el edificio sigue al dedo: se mueve la vista, la foto queda quieta
-    est.vista.x -= dx * est.vista.z;
-    est.vista.y -= dy * est.vista.z;
+    for (const q of app.edificio().plantas) { q.colocacion.x += d.x; q.colocacion.y += d.y; }
+    // el edificio sigue al dedo: se mueve la vista con él y la foto queda quieta en pantalla
+    est.vista.x += dx * est.vista.z;
+    est.vista.y += dy * est.vista.z;
   }
   app.pintar();
 };
@@ -690,12 +699,19 @@ async function exportar3D() {
 }
 
 // ---------------------------------------------------------------------------- avisos y estado
-app.aviso = (texto, tipo = '') => {
+app.aviso = (texto, tipo = '', accion = null) => {
   const d = document.createElement('div');
   d.className = 'aviso ' + tipo;
   d.textContent = texto;
+  if (accion) {
+    const b = document.createElement('button');
+    b.className = 'aviso-accion';
+    b.textContent = accion.etiqueta;
+    b.addEventListener('click', () => { d.remove(); accion.accion(); });
+    d.appendChild(b);
+  }
   $('#avisos').appendChild(d);
-  setTimeout(() => d.remove(), tipo === 'error' ? 7000 : 3500);
+  setTimeout(() => d.remove(), accion ? 15000 : tipo === 'error' ? 7000 : 3500);
 };
 app.estado = (t) => { $('#est-msg').textContent = t; };
 app.mostrarCursor = (w) => { $('#est-cursor').textContent = `x ${num(w.x)}  ·  y ${num(w.y)} m`; };
@@ -931,10 +947,11 @@ app.nuevo = () => {
 };
 
 // ---------------------------------------------------------------------------- exportar e imprimir
-function svgDePlanta(p, { conCalco = est.capas.calco } = {}) {
+function svgDePlanta(p, { conCalco = est.capas.calco, cajetin = false } = {}) {
   const c = caja(p);
   const mg = 1.2;
-  const x0 = c.x0 - mg, y0 = c.y0 - mg - 0.8, w = c.x1 - c.x0 + 2 * mg, h = c.y1 - c.y0 + 2 * mg + 0.8;
+  const banda = cajetin ? 2.4 : 0;
+  const x0 = c.x0 - mg, y0 = c.y0 - mg - 0.8, w = c.x1 - c.x0 + 2 * mg, h = c.y1 - c.y0 + 2 * mg + 0.8 + banda;
   const modelo = htmlModelo(p, app.info, { ...est.capas, muros: true });
   const calco = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   if (conCalco) pintarCalco(calco, p, est.capas);
@@ -947,8 +964,20 @@ function svgDePlanta(p, { conCalco = est.capas.calco } = {}) {
     if (e.grupo) rot += `<text class="ex-sup" x="${e.x}" y="${e.y + 0.34}" style="fill:#2a5bd7">${esc(e.grupo)}</text>`;
     if (s) rot += `<text class="ex-sup" x="${e.x}" y="${e.y + (e.grupo ? 0.68 : 0.36)}">${fmtM2(s.util)}</text>`;
   }
-  for (const n of Object.values(p.elementos)) if (n.tipo === 'nota' && visibles.has(n.capa)) rot += `<text class="ex-nota" x="${n.x}" y="${n.y}">● ${esc(n.texto)}</text>`;
+  for (const n of Object.values(p.elementos)) if (n.tipo === 'nota' && (!n.capa || visibles.has(n.capa))) rot += `<text class="ex-nota" x="${n.x}" y="${n.y}">● ${esc(n.texto)}</text>`;
   const titulo = `${app.doc.centro?.nombre || ''} · ${app.edificio().nombre} · ${p.nombre}`;
+  // cajetín dibujado dentro del SVG (para la imagen que se imprime desde el iPad)
+  let pie = '';
+  if (cajetin) {
+    const yb = y0 + h - banda + 0.2, hb = banda - 0.5;
+    const celda = (x, etq, valor) => `<text x="${x + 0.35}" y="${yb + 0.65}" style="font:600 0.3px system-ui,Arial,sans-serif;fill:#666;letter-spacing:.03px">${etq}</text>` +
+      `<text x="${x + 0.35}" y="${yb + 1.35}" style="font:600 0.48px system-ui,Arial,sans-serif;fill:#1d2330">${esc(valor)}</text>`;
+    const cols = [x0 + 0.3, x0 + 0.3 + (w - 0.6) * 0.4, x0 + 0.3 + (w - 0.6) * 0.8];
+    pie = `<rect x="${x0 + 0.3}" y="${yb}" width="${w - 0.6}" height="${hb}" fill="#fff" stroke="#333" stroke-width="0.04"/>` +
+      cols.slice(1).map((x) => `<path d="M${x} ${yb}v${hb}" stroke="#333" stroke-width="0.04"/>`).join('') +
+      celda(cols[0], 'CENTRO', app.doc.centro?.nombre || '') + celda(cols[1], 'PLANO', `${app.edificio().nombre} · ${p.nombre}`) +
+      celda(cols[2], 'FECHA', new Date().toLocaleDateString('es-ES'));
+  }
   return {
     w, h,
     texto: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x0} ${y0} ${w} ${h}" width="${(w * 10).toFixed(1)}mm" height="${(h * 10).toFixed(1)}mm">
@@ -957,6 +986,7 @@ function svgDePlanta(p, { conCalco = est.capas.calco } = {}) {
 <rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="#fff"/>
 ${calco.innerHTML}${modelo}<g>${anot}</g><g>${rot}</g>
 <text x="${x0 + 0.6}" y="${y0 + 0.9}" style="font:600 0.5px system-ui,Arial,sans-serif;fill:#1d2330">${esc(titulo)}</text>
+${pie}
 </svg>`,
   };
 }
@@ -981,8 +1011,33 @@ app.exportarPNG = async () => {
   } catch (e) { app.aviso(e.message, 'error'); }
 };
 
+/** En el iPad, la app instalada en la pantalla de inicio no abre el diálogo de imprimir:
+ *  se prepara una imagen con el cajetín y se abre «Compartir», que tiene «Imprimir» y
+ *  «Guardar en Archivos». */
+async function imprimirEnIPad(p) {
+  try {
+    const { texto, w, h } = svgDePlanta(p, { cajetin: true });
+    const k = Math.min(60, 5000 / Math.max(w, h));
+    const blob = await A.svgAPng(texto, Math.round(w * k), Math.round(h * k));
+    const file = new File([blob], nombreExport('png'), { type: 'image/png' });
+    if (!navigator.canShare?.({ files: [file] })) { A.descargar(blob, file.name); return; }
+    const compartir = () => navigator.share({ files: [file], title: file.name })
+      .catch((e) => { if (e.name !== 'AbortError') app.aviso('No se pudo compartir: ' + e.message, 'error'); });
+    try {
+      await navigator.share({ files: [file], title: file.name });
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      // si preparar la imagen ha tardado, el iPad pide un toque nuevo para compartir
+      app.aviso('La imagen para imprimir está lista.', 'ok', { etiqueta: 'Imprimir…', accion: compartir });
+    }
+  } catch (e) {
+    app.aviso('No se pudo preparar la impresión: ' + e.message, 'error');
+  }
+}
+
 app.imprimir = () => {
   const p = app.planta();
+  if (window.navigator.standalone === true) { imprimirEnIPad(p); return; }
   const { texto, w, h } = svgDePlanta(p);
   const necesaria = Math.max((w * 1000) / 400, (h * 1000) / 245);
   const escala = [50, 75, 100, 125, 150, 200, 250, 300, 400, 500, 750, 1000].find((s) => s >= necesaria) || Math.ceil(necesaria);
@@ -1051,11 +1106,16 @@ window.addEventListener('drop', async (e) => {
 
 window.addEventListener('resize', () => app.pintarSobre());
 
+// iPad: pellizcar no debe ampliar la página entera (el zoom es del plano)
+for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(t, (e) => e.preventDefault(), { passive: false });
+// en pantallas estrechas el panel es una hoja inferior: empieza cerrada
+if (innerWidth <= 820) document.body.classList.add('sin-panel');
+
 // ---------------------------------------------------------------------------- preferencias
 app.guardarPreferencias = () => {
   const { capas, orto, paso, grosor, tipoMuro, estadoNuevo, anot } = est;
-  const { herr, color, grosor: grosorAnot, soloLapiz } = anot;
-  A.guardarLocal('prefs', { capas, orto, paso, grosor, tipoMuro, estadoNuevo, anot: { herr, color, grosor: grosorAnot, soloLapiz } }).catch(() => {});
+  const { herr, color, grosor: grosorAnot, soloLapiz, lapizVisto } = anot;
+  A.guardarLocal('prefs', { capas, orto, paso, grosor, tipoMuro, estadoNuevo, anot: { herr, color, grosor: grosorAnot, soloLapiz, lapizVisto } }).catch(() => {});
 };
 
 // ---------------------------------------------------------------------------- arranque
@@ -1071,7 +1131,23 @@ pintarOpciones();
     for (const k of ['orto', 'paso', 'grosor', 'tipoMuro', 'estadoNuevo']) if (k in prefs) est[k] = prefs[k];
     if (prefs.anot) Object.assign(est.anot, prefs.anot);
   }
+  // Windows: la app instalada puede abrir un .plano.json con doble clic («Abrir con…»)
+  let lanzado = false;
+  if ('launchQueue' in window) {
+    window.launchQueue.setConsumer(async (params) => {
+      const h = params.files?.[0];
+      if (!h) return;
+      lanzado = true;
+      try {
+        const f = await h.getFile();
+        abrirTexto({ texto: await f.text(), nombre: f.name, manejador: h });
+      } catch (e) {
+        app.aviso('No se pudo abrir: ' + e.message, 'error');
+      }
+    });
+  }
   const texto = await A.leerLocal('doc');
+  if (lanzado) return; // manda el archivo con el que se ha abierto la app
   if (texto) {
     try {
       const meta = (await A.leerLocal('meta')) || {};

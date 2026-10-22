@@ -1,8 +1,9 @@
 // Service worker: guarda la app para que funcione sin conexión.
 // Al publicar una versión nueva, cambia VERSION para que se renueve la caché.
 
-const VERSION = 'plano-cole-v2';
-const TESELAS = 'plano-cole-teselas';
+const VERSION = 'plano-cole-v3';
+// v2: las teselas se guardan con CORS (las de «plano-cole-teselas» eran opacas y el 3D no las podía usar)
+const TESELAS = 'plano-cole-teselas-2';
 const ARCHIVOS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/main.js', 'js/modelo.js', 'js/geo.js', 'js/vista.js', 'js/espacios.js', 'js/herramientas.js',
@@ -21,15 +22,22 @@ self.addEventListener('activate', (e) => {
     .then(() => self.clients.claim()));
 });
 
+// Las teselas se piden SIEMPRE con CORS (el IGN lo permite) y así se guardan. Una respuesta
+// CORS sirve tanto al plano 2D (<image>, sin CORS) como al 3D (textura, con CORS); una opaca,
+// en cambio, haría fallar al 3D con las zonas que ya se han visto en 2D.
+let guardadas = 0;
 async function tesela(req) {
+  const url = req.url;
   const c = await caches.open(TESELAS);
-  const guardada = await c.match(req);
+  const guardada = await c.match(url);
   if (guardada) return guardada;
-  const r = await fetch(req);
-  if (r.ok || r.type === 'opaque') {
-    c.put(req, r.clone());
-    // límite blando: unas 4000 teselas (~60 MB como mucho)
-    c.keys().then((ks) => { if (ks.length > 4000) ks.slice(0, 500).forEach((k) => c.delete(k)); });
+  const r = await fetch(url, { mode: 'cors', credentials: 'omit' });
+  if (r.ok) {
+    await c.put(url, r.clone());
+    // límite blando: unas 4000 teselas (~60 MB como mucho); se revisa de vez en cuando
+    if (++guardadas % 200 === 0) {
+      c.keys().then((ks) => { if (ks.length > 4000) ks.slice(0, ks.length - 3500).forEach((k) => c.delete(k)); });
+    }
   }
   return r;
 }

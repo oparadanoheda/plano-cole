@@ -163,11 +163,12 @@ export function crearAnotador(app) {
   let textoPendiente = null;
 
   const planta = () => app.planta();
+  /** Capa donde se dibuja ahora. Si estaba apagada se enciende (con sus notas y su casilla). */
   const capaActiva = () => {
     const cs = app.doc.capasAnotacion;
     if (!cs.some((c) => c.id === est.anot.capa)) est.anot.capa = cs[0].id;
     const c = cs.find((x) => x.id === est.anot.capa);
-    if (!c.visible) { c.visible = true; app.pintar(); }
+    if (!c.visible) { c.visible = true; app.cambioCapasAnot(); }
     return c.id;
   };
 
@@ -183,7 +184,20 @@ export function crearAnotador(app) {
   /** ¿Este puntero dibuja? (el lápiz siempre; el dedo solo si no está activado «Solo el lápiz») */
   function quiere(e, numPunteros) {
     if (est.modo !== 'anotar') return false;
-    if (e.pointerType === 'pen') { est.anot.hayLapiz = true; return true; }
+    if (e.pointerType === 'pen') {
+      // con el Apple Pencil, lo natural es que el dedo mueva el plano y la palma no pinte.
+      // Se activa una sola vez; si luego se apaga a mano, se respeta.
+      if (!est.anot.lapizVisto) {
+        est.anot.lapizVisto = true;
+        if (!est.anot.soloLapiz) {
+          est.anot.soloLapiz = true;
+          app.aviso('Apple Pencil detectado: ahora dibuja solo el lápiz y con el dedo mueves el plano. Se cambia en la paleta.');
+          app.pintarBarraAnot?.();
+        }
+        app.guardarPreferencias();
+      }
+      return true;
+    }
     if (e.pointerType === 'touch') return !est.anot.soloLapiz && numPunteros === 1;
     return e.button === 0;
   }
@@ -218,9 +232,11 @@ export function crearAnotador(app) {
     if (herr === 'borrador') { borrarEn(w, true); return 'borrador'; }
     if (herr === 'seleccion') {
       const a = buscar(w);
+      // tocar otra vez un texto ya seleccionado lo abre para escribir (en el iPad no hay doble clic)
+      const yaSeleccionado = !!a && a.id === est.anotSel;
       est.anotSel = a?.id || null;
       app.pintar();
-      if (a) arrastre = { a, ultimo: w, movido: false };
+      if (a) arrastre = { a, ultimo: w, movido: false, yaSeleccionado };
       app.pintarBarraAnot?.();
       return a ? 'mover' : 'nada';
     }
@@ -229,7 +245,7 @@ export function crearAnotador(app) {
         ancho: r3((2.4 * est.anot.grosor) / z), puntos: [w.x, w.y, w.x, w.y] };
     } else {
       const pl = PLUMAS[herr];
-      actual = { id: nuevoId('t'), capa: capaActiva(), tipo: 'trazo', herr, color: herr === 'lapiz' ? est.anot.color : est.anot.color,
+      actual = { id: nuevoId('t'), capa: capaActiva(), tipo: 'trazo', herr, color: est.anot.color,
         ancho: r3((pl.ancho * est.anot.grosor) / z), puntos: [r3(w.x), r3(w.y), r3(presion(e))] };
     }
     grupoPrevio().innerHTML = htmlAnotacion(actual);
@@ -269,8 +285,10 @@ export function crearAnotador(app) {
       return;
     }
     if (arrastre) {
-      if (arrastre.movido) app.cambio();
+      const { a, movido, yaSeleccionado } = arrastre;
       arrastre = null;
+      if (movido) app.cambio();
+      else if (yaSeleccionado && a.tipo === 'texto') abrirEditor(null, a);
       return;
     }
     if (est.anot.herr === 'borrador' && borrados) { borrados = false; app.cambio(); return; }
@@ -379,6 +397,12 @@ export function crearAnotador(app) {
     return false;
   }
 
+  /** Abre para escribir el texto seleccionado (botón de la paleta). */
+  function editarSeleccion() {
+    const a = planta().anotaciones.find((x) => x.id === est.anotSel);
+    if (a?.tipo === 'texto') abrirEditor(null, a);
+  }
+
   function borrarSeleccion() {
     const p = planta();
     if (!est.anotSel) return false;
@@ -389,13 +413,8 @@ export function crearAnotador(app) {
     return true;
   }
 
-  function borrarCapa(capa) {
-    const p = planta();
-    app.antes();
-    p.anotaciones = p.anotaciones.filter((a) => a.capa !== capa);
-    for (const [id, n] of Object.entries(p.elementos)) if (n.capa === capa) delete p.elementos[id];
-    app.cambio();
-  }
-
-  return { quiere, empezar, mover, terminar, cancelar, editarTexto, borrarSeleccion, borrarCapa, cerrarEditor: () => cerrarEditor(true) };
+  return {
+    quiere, empezar, mover, terminar, cancelar, editarTexto, editarSeleccion, borrarSeleccion, capaActiva,
+    cerrarEditor: () => cerrarEditor(true),
+  };
 }

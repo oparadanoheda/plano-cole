@@ -203,6 +203,9 @@ export function pintarSeleccion(g, planta, sel, info) {
 // Capa de pantalla
 // ---------------------------------------------------------------------------
 
+/** Una nota se ve si su capa de anotaciones está encendida (las que no tienen capa, siempre). */
+export const notaVisible = (n, est) => !n.capa || !est.capasAnotVisibles || est.capasAnotVisibles.has(n.capa);
+
 export const aPantalla = (v, p) => ({ x: p.x * v.z + v.x, y: p.y * v.z + v.y });
 export const aMundo = (v, p) => ({ x: (p.x - v.x) / v.z, y: (p.y - v.y) / v.z });
 
@@ -279,7 +282,7 @@ export function pintarSobre(g, planta, est, info, w, h) {
   }
   // notas
   for (const [id, n] of Object.entries(planta.elementos)) {
-    if (n.tipo !== 'nota' || (est.capasAnotVisibles && !est.capasAnotVisibles.has(n.capa))) continue;
+    if (n.tipo !== 'nota' || !notaVisible(n, est)) continue;
     const s = aPantalla(v, n);
     const sel = est.sel?.tipo === 'nota' && est.sel.id === id ? ' sel' : '';
     out.push(`<g class="nota${sel}" transform="translate(${f(s.x)} ${f(s.y)})"><circle r="9"/><text y="4">!</text>` +
@@ -380,18 +383,34 @@ export function aplicarVista(gMundo, v) {
   gMundo.setAttribute('transform', `matrix(${v.z} 0 0 ${v.z} ${v.x} ${v.y})`);
 }
 
-/** Caja que abarca la planta (modelo y calco). */
+const cajasCalco = new WeakMap();
+/** Caja del dibujo del calco (se calcula una vez: el calco no cambia). */
+function cajaCalco(calco) {
+  if (!calco?.capas?.arquitectura) return null;
+  if (cajasCalco.has(calco)) return cajasCalco.get(calco);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const t of calco.capas.arquitectura) {
+    const nums = t.d.match(/-?\d+(\.\d+)?/g) || [];
+    for (let i = 0; i + 1 < nums.length; i += 2) {
+      const x = +nums[i], y = +nums[i + 1];
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+  }
+  const c = Number.isFinite(x0) ? { x0, y0, x1, y1 } : null;
+  cajasCalco.set(calco, c);
+  return c;
+}
+
+/** Caja que abarca la planta: sus muros y salas, y si aún no tiene muros, también el calco. */
 export function caja(planta) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const ext = (p) => { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); };
   for (const n of Object.values(planta.nodos)) ext(n);
-  for (const e of Object.values(planta.espacios)) ext(e);
-  if (!Number.isFinite(x0) && planta.calco?.capas?.arquitectura) {
-    for (const t of planta.calco.capas.arquitectura) {
-      const nums = t.d.match(/-?\d+(\.\d+)?/g) || [];
-      for (let i = 0; i + 1 < nums.length; i += 2) ext({ x: +nums[i], y: +nums[i + 1] });
-    }
+  if (!Number.isFinite(x0)) {
+    const c = cajaCalco(planta.calco);
+    if (c) { ext({ x: c.x0, y: c.y0 }); ext({ x: c.x1, y: c.y1 }); }
   }
+  for (const e of Object.values(planta.espacios)) ext(e);
   if (!Number.isFinite(x0)) return { x0: 0, y0: 0, x1: 20, y1: 15 };
   return { x0, y0, x1, y1 };
 }
