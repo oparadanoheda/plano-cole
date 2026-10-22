@@ -1,7 +1,7 @@
 // Service worker: guarda la app para que funcione sin conexión.
 // Al publicar una versión nueva, cambia VERSION para que se renueve la caché.
 
-const VERSION = 'plano-cole-v6';
+const VERSION = 'plano-cole-v7';
 // v2: las teselas se guardan con CORS (las de «plano-cole-teselas» eran opacas y el 3D no las podía usar)
 const TESELAS = 'plano-cole-teselas-2';
 const ARCHIVOS = [
@@ -13,8 +13,10 @@ const ARCHIVOS = [
   'iconos/icono.svg', 'iconos/icono-180.png', 'iconos/icono-192.png', 'iconos/icono-512.png',
 ];
 
+// Siempre del servidor, no de la caché normal del navegador (GitHub Pages deja guardar cada
+// archivo 10 minutos): si no, justo después de publicar se mezclarían archivos nuevos y viejos.
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(ARCHIVOS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(ARCHIVOS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -52,9 +54,10 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (url.origin !== location.origin) return;
-  // la app: red primero (para recibir mejoras en cuanto se publican); si no hay red, la caché
+  // la app: red primero (para recibir mejoras en cuanto se publican), preguntando al servidor si el
+  // archivo ha cambiado (contesta «sin cambios» si no); si no hay red, la caché
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request.mode === 'navigate' ? e.request : new Request(e.request, { cache: 'no-cache' }))
       .then((r) => {
         if (r.ok) { const copia = r.clone(); caches.open(VERSION).then((c) => c.put(e.request, copia)); }
         return r;
