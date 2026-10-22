@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <title>Plano del cole</title>
-  <meta name="description" content="Plano editable del centro: muros, puertas, espacios, anotaciones, foto aérea y 3D.">
+  <meta name="description" content="Plano editable del centro: muros, puertas, espacios, anotaciones, red y cableado, foto aérea y 3D.">
   <meta name="theme-color" content="#ffffff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -57,6 +57,14 @@
       <symbol id="i-abajo" viewBox="0 0 24 24"><path d="M12 19V5M6 13l6 6 6-6"/></symbol>
       <symbol id="i-izq" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
       <symbol id="i-dcha" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+      <symbol id="i-red" viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="5" rx="1"/><rect x="2.5" y="16.5" width="6" height="5" rx="1"/><rect x="15.5" y="16.5" width="6" height="5" rx="1"/><path d="M12 7.5V12M5.5 16.5V12h13v4.5"/></symbol>
+      <symbol id="i-cable" viewBox="0 0 24 24"><path d="M5 15c0-6 4-9 7-9s7 3 7 9"/><rect x="2.5" y="15" width="5" height="6" rx="1"/><rect x="16.5" y="15" width="5" height="6" rx="1"/></symbol>
+      <symbol id="i-armario" viewBox="0 0 24 24"><rect x="5.5" y="2.5" width="13" height="19" rx="1.5"/><path d="M5.5 7.5h13M5.5 12h13M5.5 16.5h13M8.5 5h.01M8.5 9.7h.01M8.5 14.3h.01"/></symbol>
+      <symbol id="i-switch" viewBox="0 0 24 24"><rect x="2.5" y="8" width="19" height="8" rx="1.5"/><path d="M6.5 12h.01M9.5 12h.01M12.5 12h.01M15.5 12h.01M18.5 12h.01"/></symbol>
+      <symbol id="i-router" viewBox="0 0 24 24"><rect x="3" y="12.5" width="18" height="7" rx="1.5"/><path d="M7 16h.01M10.5 16h.01M8.5 12.5L6.5 5M15.5 12.5l2-7.5"/></symbol>
+      <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2.5 9.5a14 14 0 0 1 19 0M5.5 12.8a9.6 9.6 0 0 1 13 0M8.6 16a5 5 0 0 1 6.8 0M12 19.3h.01"/></symbol>
+      <symbol id="i-toma" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="M8 9h8v4.5h-2v2h-4v-2H8z"/></symbol>
+      <symbol id="i-pc" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8.5 20h7M12 16v4"/></symbol>
     </defs>
   </svg>
 
@@ -73,11 +81,12 @@
       <button data-modo="ver" title="Consultar el plano sin tocar nada"><svg class="ic"><use href="#i-ojo"/></svg><span>Ver</span></button>
       <button data-modo="editar" title="Mover paredes, puertas, salas…"><svg class="ic"><use href="#i-editar"/></svg><span>Editar</span></button>
       <button data-modo="anotar" title="Dibujar y escribir encima, como en un papel"><svg class="ic"><use href="#i-boli"/></svg><span>Anotar</span></button>
+      <button data-modo="red" title="Red: switches, puntos WiFi, tomas y el recorrido de los cables"><svg class="ic"><use href="#i-red"/></svg><span>Red</span></button>
       <button data-modo="3d" title="Ver el cole en 3D"><svg class="ic"><use href="#i-cubo"/></svg><span>3D</span></button>
     </nav>
     <div class="buscador">
       <svg class="ic"><use href="#i-buscar"/></svg>
-      <input id="buscar" type="search" placeholder="Buscar sala o grupo…" autocomplete="off" spellcheck="false">
+      <input id="buscar" type="search" placeholder="Buscar sala, grupo o equipo…" autocomplete="off" spellcheck="false">
       <div class="resultados" id="resultados" hidden></div>
     </div>
     <div class="acciones">
@@ -103,18 +112,31 @@
   </header>
 
   <main class="cuerpo">
-    <aside class="herramientas" id="herramientas" aria-label="Herramientas de edición">
-      <button data-herr="sel" title="Seleccionar y mover (V)"><svg class="ic"><use href="#i-sel"/></svg><span>Mover</span></button>
-      <span class="grupo-h">Dibujar</span>
-      <button data-herr="muro" title="Dibujar muros (M)"><svg class="ic"><use href="#i-muro"/></svg><span>Muro</span></button>
-      <button data-herr="puerta" title="Puerta (P)"><svg class="ic"><use href="#i-puerta"/></svg><span>Puerta</span></button>
-      <button data-herr="ventana" title="Ventana (W)"><svg class="ic"><use href="#i-ventana"/></svg><span>Ventana</span></button>
-      <button data-herr="paso" title="Paso sin puerta (H)"><svg class="ic"><use href="#i-paso"/></svg><span>Paso</span></button>
-      <button data-herr="pilar" title="Pilar (C)"><svg class="ic"><use href="#i-pilar"/></svg><span>Pilar</span></button>
-      <span class="grupo-h">Datos</span>
-      <button data-herr="espacio" title="Nombrar un espacio (E)"><svg class="ic"><use href="#i-espacio"/></svg><span>Sala</span></button>
-      <button data-herr="nota" title="Nota (N)"><svg class="ic"><use href="#i-nota"/></svg><span>Nota</span></button>
-      <button data-herr="medir" title="Medir distancias (D)"><svg class="ic"><use href="#i-medir"/></svg><span>Medir</span></button>
+    <aside class="herramientas" id="herramientas" aria-label="Herramientas">
+      <div class="herr-editar">
+        <button data-herr="sel" title="Seleccionar y mover (V)"><svg class="ic"><use href="#i-sel"/></svg><span>Mover</span></button>
+        <span class="grupo-h">Dibujar</span>
+        <button data-herr="muro" title="Dibujar muros (M)"><svg class="ic"><use href="#i-muro"/></svg><span>Muro</span></button>
+        <button data-herr="puerta" title="Puerta (P)"><svg class="ic"><use href="#i-puerta"/></svg><span>Puerta</span></button>
+        <button data-herr="ventana" title="Ventana (W)"><svg class="ic"><use href="#i-ventana"/></svg><span>Ventana</span></button>
+        <button data-herr="paso" title="Paso sin puerta (H)"><svg class="ic"><use href="#i-paso"/></svg><span>Paso</span></button>
+        <button data-herr="pilar" title="Pilar (C)"><svg class="ic"><use href="#i-pilar"/></svg><span>Pilar</span></button>
+        <span class="grupo-h">Datos</span>
+        <button data-herr="espacio" title="Nombrar un espacio (E)"><svg class="ic"><use href="#i-espacio"/></svg><span>Sala</span></button>
+        <button data-herr="nota" title="Nota (N)"><svg class="ic"><use href="#i-nota"/></svg><span>Nota</span></button>
+        <button data-herr="medir" title="Medir distancias (D)"><svg class="ic"><use href="#i-medir"/></svg><span>Medir</span></button>
+      </div>
+      <div class="herr-red">
+        <button data-herr="sel" title="Seleccionar y mover (V)"><svg class="ic"><use href="#i-sel"/></svg><span>Mover</span></button>
+        <button data-herr="cable" title="Tender un cable (C)"><svg class="ic"><use href="#i-cable"/></svg><span>Cable</span></button>
+        <span class="grupo-h">Equipos</span>
+        <button data-herr="armario" title="Armario o rack (A)"><svg class="ic"><use href="#i-armario"/></svg><span>Armario</span></button>
+        <button data-herr="router" title="Router (R)"><svg class="ic"><use href="#i-router"/></svg><span>Router</span></button>
+        <button data-herr="switch" title="Switch (S)"><svg class="ic"><use href="#i-switch"/></svg><span>Switch</span></button>
+        <button data-herr="ap" title="Punto de acceso WiFi (W)"><svg class="ic"><use href="#i-wifi"/></svg><span>WiFi</span></button>
+        <button data-herr="toma" title="Toma de red (T)"><svg class="ic"><use href="#i-toma"/></svg><span>Toma</span></button>
+        <button data-herr="equipo" title="Ordenador, impresora, proyector… (E)"><svg class="ic"><use href="#i-pc"/></svg><span>Equipo</span></button>
+      </div>
     </aside>
 
     <section class="lienzo" id="lienzo">
@@ -133,10 +155,12 @@
           <g id="g-contexto"></g>
           <g id="g-modelo"></g>
           <g id="g-hover"></g>
+          <g id="g-red"></g>
           <g id="g-anot"></g>
           <g id="g-sel"></g>
         </g>
         <g id="g-sobre"></g>
+        <g id="g-red-sobre"></g>
       </svg>
       <div class="vista3d" id="vista3d" hidden>
         <div class="barra-3d" id="barra-3d"></div>
@@ -181,10 +205,12 @@
     <aside class="panel" id="panel">
       <div class="pestanas" role="tablist">
         <button role="tab" data-pest="props" class="activa">Detalles</button>
+        <button role="tab" data-pest="esquema">Esquema</button>
         <button role="tab" data-pest="versiones">Versiones</button>
         <button class="btn-ic cerrar-hoja" id="b-cerrar-panel" title="Cerrar el panel"><svg class="ic"><use href="#i-cerrar"/></svg></button>
       </div>
       <div class="pest-cont" id="pest-props"></div>
+      <div class="pest-cont" id="pest-esquema" hidden></div>
       <div class="pest-cont" id="pest-versiones" hidden></div>
     </aside>
   </main>

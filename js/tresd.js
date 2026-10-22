@@ -6,6 +6,7 @@ import { salas } from './espacios.js';
 import { geometriaMuro, indicePorNodo, COLOR_USO } from './vista.js';
 import { aSitio } from './modelo.js';
 import { mosaicoSitio } from './satelite.js';
+import * as R from './red.js';
 
 let T = null;
 let Orbitar = null;
@@ -59,7 +60,7 @@ export class Vista3D {
   constructor(app, contenedor) {
     this.app = app;
     this.cont = contenedor;
-    this.op = { hasta: 99, separar: false, foto: true, nombres: true };
+    this.op = { hasta: 99, separar: false, foto: true, nombres: true, red: true };
     this.activo = false;
     this.suelos = [];
     this.fotoCache = null;
@@ -160,6 +161,7 @@ export class Vista3D {
     this.suelos = [];
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity, yMax = 0;
     const ext = (p) => { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.y); z1 = Math.max(z1, p.y); };
+    const y0s = new Map(); // altura del suelo de cada planta dibujada (para la red)
 
     for (const ed of app.doc.edificios) {
       if (ed.exterior) continue;
@@ -175,6 +177,7 @@ export class Vista3D {
       for (const p of pls) {
         if (p.nivel > this.op.hasta) continue;
         const y0 = bases.get(p.id) + (this.op.separar ? Math.max(0, p.nivel) * 3.5 : 0);
+        y0s.set(p.id, y0);
         const alto = (p.altura || 3.2) - LOSA;
         const S = (q) => aSitio(p, q);
         const info = salas(p);
@@ -256,6 +259,7 @@ export class Vista3D {
         yMax = Math.max(yMax, y0 + alto);
       }
     }
+    if (this.op.red && app.doc.red) this.red3D(grupo, y0s);
     if (!Number.isFinite(x0)) { x0 = z0 = -10; x1 = z1 = 10; }
     this.caja = { x0, x1, z0, z1, yMax };
 
@@ -269,6 +273,62 @@ export class Vista3D {
     Object.assign(this.sol.shadow.camera, { left: -R, right: R, top: R, bottom: -R, near: 1, far: R * 4 });
     this.sol.shadow.camera.updateProjectionMatrix();
     if (encuadrar || !this.yaEncuadrado) { this.encuadrar(); this.yaEncuadrado = true; }
+  }
+
+  /** La red: cada cable, un tubo fino a la altura por la que va, con sus subidas entre plantas
+   *  y sus bajadas a los equipos; cada equipo, una caja de su color. */
+  red3D(grupo, y0s) {
+    const red = this.app.doc.red;
+    const ip = R.indicePlantas(this.app.doc);
+    const porColor = new Map();
+    const pr = (color) => { if (!porColor.has(color)) porColor.set(color, new Prismas()); return porColor.get(color); };
+    // el «Exterior» no se levanta en 3D, pero sus cables van a ras de suelo
+    const base = (pl) => (y0s.has(pl) ? y0s.get(pl) : ip.get(pl)?.ed.exterior ? 0 : null);
+    const S = (pl, q) => aSitio(ip.get(pl).p, q);
+    const G = 0.035; // medio grosor del tubo
+    const tubo = (P, A, B, y) => {
+      const L = Math.hypot(B.x - A.x, B.y - A.y);
+      if (L < 1e-6) return;
+      const n = { x: (-(B.y - A.y) / L) * G, y: ((B.x - A.x) / L) * G };
+      P.prisma([{ x: A.x - n.x, y: A.y - n.y }, { x: B.x - n.x, y: B.y - n.y }, { x: B.x + n.x, y: B.y + n.y }, { x: A.x + n.x, y: A.y + n.y }], y - G, y + G);
+    };
+    const vertical = (P, A, ya, yb) => {
+      if (Math.abs(ya - yb) < 0.01) return;
+      P.prisma([{ x: A.x - G, y: A.y - G }, { x: A.x + G, y: A.y - G }, { x: A.x + G, y: A.y + G }, { x: A.x - G, y: A.y + G }],
+        Math.min(ya, yb) - G, Math.max(ya, yb) + G);
+    };
+    for (const c of Object.values(red.cables)) {
+      const rec = R.recorrido(red, ip, c);
+      const P = pr(c.estado === 'averia' ? '#dc2626' : R.TIPOS_CABLE[c.tipo].color);
+      const h = (pl) => base(pl) + R.alturaCanal(c.canal, ip.get(pl)?.p);
+      for (const t of rec.tramos) {
+        if (base(t.pl) == null) continue;
+        for (let i = 1; i < t.pts.length; i++) tubo(P, S(t.pl, t.pts[i - 1]), S(t.pl, t.pts[i]), h(t.pl));
+      }
+      for (const k of rec.cambios) if (base(k.de) != null && base(k.a) != null) vertical(P, S(k.de, k.pDe), h(k.de), h(k.a));
+      for (const [l, x] of [[rec.la, c.a], [rec.lb, c.b]]) {
+        if (l && base(l.pl) != null) vertical(P, S(l.pl, l), h(l.pl), base(l.pl) + R.alturaEquipo(red, x.eq, ip.get(l.pl).p));
+      }
+    }
+    // equipos: [ancho, fondo, alto] en metros
+    const TAM = { armario: [0.6, 0.6, 0], router: [0.42, 0.3, 0.12], switch: [0.5, 0.32, 0.1], panel: [0.5, 0.2, 0.1], ap: [0.32, 0.32, 0.06], toma: [0.16, 0.16, 0.14], equipo: [0.45, 0.4, 0.4] };
+    for (const [id, e] of Object.entries(red.equipos)) {
+      if (e.en || base(e.pl) == null) continue;
+      const A = S(e.pl, e);
+      const [an, fo, al] = TAM[e.tipo];
+      const q = [{ x: A.x - an / 2, y: A.y - fo / 2 }, { x: A.x + an / 2, y: A.y - fo / 2 }, { x: A.x + an / 2, y: A.y + fo / 2 }, { x: A.x - an / 2, y: A.y + fo / 2 }];
+      const y = base(e.pl);
+      const P = pr(R.TIPOS_EQUIPO[e.tipo].color);
+      // un armario va del suelo a 1,9 m; los demás, centrados en su altura
+      if (e.tipo === 'armario') P.prisma(q, y, y + (e.h != null ? e.h + 0.6 : 1.9));
+      else { const hc = y + R.alturaEquipo(red, id, ip.get(e.pl).p); P.prisma(q, hc - al / 2, hc + al / 2); }
+    }
+    for (const [color, P] of porColor) {
+      if (!P.pos.length) continue;
+      const m = new T.Mesh(P.geometria(), this.material(color));
+      m.castShadow = true;
+      grupo.add(m);
+    }
   }
 
   async suelo() {

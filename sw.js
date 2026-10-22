@@ -1,13 +1,14 @@
 // Service worker: guarda la app para que funcione sin conexión.
 // Al publicar una versión nueva, cambia VERSION para que se renueve la caché.
 
-const VERSION = 'plano-cole-v3';
+const VERSION = 'plano-cole-v4';
 // v2: las teselas se guardan con CORS (las de «plano-cole-teselas» eran opacas y el 3D no las podía usar)
 const TESELAS = 'plano-cole-teselas-2';
 const ARCHIVOS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/main.js', 'js/modelo.js', 'js/geo.js', 'js/vista.js', 'js/espacios.js', 'js/herramientas.js',
   'js/panel.js', 'js/archivo.js', 'js/estilo.js', 'js/satelite.js', 'js/anotar.js', 'js/tresd.js',
+  'js/red.js', 'js/redvista.js', 'js/redherr.js', 'js/redpanel.js',
   'vendor/three.module.min.js', 'vendor/OrbitControls.js',
   'iconos/icono.svg', 'iconos/icono-180.png', 'iconos/icono-192.png', 'iconos/icono-512.png',
 ];

@@ -16,7 +16,8 @@
 //             calco:     { origen, capas: {arquitectura|pci|evacuacion|sectores: [trazados]} } } ] } ],
 //     sitio: { ancla: {x, y, lat, lon}, rumbo },   // georreferencia: rumbo = hacia dónde mira el «arriba» del plano
 //     capasAnotacion: [ {id, nombre, visible} ],
-//     versiones: [ {id, nombre, fecha, plantas: {plantaId: contenido editable}} ] }
+//     red: { equipos, cables },                     // la red del centro (ver red.js)
+//     versiones: [ {id, nombre, fecha, plantas: {plantaId: contenido editable}, red} ] }
 //
 // En una abertura, «pos» es la distancia del centro al nodo a; «lado» ±1 es hacia
 // qué lado abre la hoja (+1 = normal (-uy, ux) del muro a→b); «bisagra» 'a' o 'b'.
@@ -115,15 +116,15 @@ export function normalizar(doc) {
 // trazados y números, que van dentro de atributos.
 // ---------------------------------------------------------------------------
 
-const ID = /^[\w-]{1,64}$/;
+export const ID = /^[\w-]{1,64}$/;
 const COLOR = /^#[0-9a-fA-F]{3,8}$/;
 const TRAZADO = /^[MLHVCSQTAZmlhvcsqtaz0-9eE.,\s+-]*$/;
-const esNum = (v) => typeof v === 'number' && Number.isFinite(v);
-const esTextoOpc = (v) => v === undefined || v === null || typeof v === 'string';
-const deLista = (v, lista, def) => (typeof v === 'string' && Object.hasOwn(lista, v) ? v : def);
+export const esNum = (v) => typeof v === 'number' && Number.isFinite(v);
+export const esTextoOpc = (v) => v === undefined || v === null || typeof v === 'string';
+export const deLista = (v, lista, def) => (typeof v === 'string' && Object.hasOwn(lista, v) ? v : def);
 const PLUMAS_VALIDAS = { boli: 1, rotulador: 1, lapiz: 1 };
 
-function exigir(cond, que) {
+export function exigir(cond, que) {
   if (!cond) throw new Error(`El archivo tiene datos no válidos (${que}). Por seguridad no se abre.`);
 }
 

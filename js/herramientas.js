@@ -5,8 +5,12 @@ import { dist, sub, add, mul, unit, proyectar, distSegmento, redondear, leerNum 
 import { aMundo, aPantalla, notaVisible } from './vista.js';
 import * as M from './modelo.js';
 import { caraEn } from './espacios.js';
+import { crearHerrRed } from './redherr.js';
 
 const UMBRAL_ARRASTRE = 5; // px
+const ATAJOS = { v: 'sel', m: 'muro', p: 'puerta', w: 'ventana', h: 'paso', e: 'espacio', d: 'medir', c: 'pilar', n: 'nota' };
+const ATAJOS_RED = { v: 'sel', c: 'cable', a: 'armario', r: 'router', s: 'switch', w: 'ap', t: 'toma', e: 'equipo', d: 'medir' };
+const ES_RED = ['equipo', 'cable', 'paso'];
 
 export function instalarInteraccion(app) {
   const svg = app.svg;
@@ -16,6 +20,8 @@ export function instalarInteraccion(app) {
   let espacioPulsado = false;
 
   const est = app.est;
+  const red = crearHerrRed(app);
+  app.redHerr = red;
   const rect = () => svg.getBoundingClientRect();
   const local = (e) => { const r = rect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   const tolM = (px) => px / est.vista.z;
@@ -110,6 +116,12 @@ export function instalarInteraccion(app) {
 
   // ------------------------------------------------------------------ búsqueda bajo el puntero
   function tocar(s) {
+    // en el modo Red solo se toca la red; en Ver, la red (si se ve) va por delante de las salas
+    if (est.modo === 'red') return red.tocar(s);
+    if (est.modo === 'ver' && est.capas.red) {
+      const r = red.tocar(s, { conTiradores: false });
+      if (r) return r;
+    }
     const p = app.planta();
     const v = est.vista;
     const w = aMundo(v, s);
@@ -270,6 +282,7 @@ export function instalarInteraccion(app) {
   svg.addEventListener('contextmenu', (e) => e.preventDefault());
   svg.addEventListener('dblclick', (e) => {
     if (est.modo === 'anotar') { app.anotar.editarTexto(aMundo(est.vista, local(e))); return; }
+    if (est.modo === 'red') return; // el doble toque que acaba un cable ya lo trata el clic
     if (est.herr === 'muro') { terminar(); return; }
     const t = tocar(local(e));
     if (est.modo === 'editar' && (t?.tipo === 'espacio' || t?.tipo === 'nota')) app.enfocarPanel();
@@ -294,7 +307,8 @@ export function instalarInteraccion(app) {
     if (e.key === 'Escape') {
       if (est.ajuste) { app.terminarAjuste(false); return; }
       if (est.anotSel) { est.anotSel = null; app.pintar(); app.pintarBarraAnot(); return; }
-      if (!terminar()) app.seleccionar(null);
+      if (est.redVert) { est.redVert = null; app.pintarSobre(); return; }
+      if (!terminar(true)) app.seleccionar(null);
       return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && (est.sel || est.anotSel)) { app.borrarSeleccion(); e.preventDefault(); return; }
@@ -307,7 +321,7 @@ export function instalarInteraccion(app) {
       else if (k === 'f') { app.enfocarBusqueda(); e.preventDefault(); }
       return;
     }
-    const atajos = { v: 'sel', m: 'muro', p: 'puerta', w: 'ventana', h: 'paso', e: 'espacio', d: 'medir', c: 'pilar', n: 'nota' };
+    const atajos = est.modo === 'red' ? ATAJOS_RED : ATAJOS;
     if (atajos[e.key.toLowerCase()] && !e.altKey && est.modo !== 'anotar') { app.herramienta(atajos[e.key.toLowerCase()]); return; }
     if (e.key === 'f' || e.key === 'F') app.encuadrar();
     if (e.key === '+' || e.key === '=') zoomEn({ x: svg.clientWidth / 2, y: svg.clientHeight / 2 }, 1.25);
@@ -319,6 +333,7 @@ export function instalarInteraccion(app) {
 
   // ------------------------------------------------------------------ flotar (ratón sin pulsar)
   function flotar(s) {
+    if (est.modo === 'red' && est.herr !== 'medir' && !est.ajuste) { red.flotar(s); return; }
     const w = aMundo(est.vista, s);
     const t = est.temp;
     app.mostrarCursor(w);
@@ -344,7 +359,7 @@ export function instalarInteraccion(app) {
       svg.dataset.sobre = toque ? toque.tipo : '';
       // resalte de muros y salas al pasar el ratón
       let h = toque && (toque.tipo === 'muro' || toque.tipo === 'espacio') ? { tipo: toque.tipo, id: toque.id } : null;
-      if (est.modo === 'ver') {
+      if (est.modo === 'ver' && !ES_RED.includes(toque?.tipo)) {
         const sala = Object.entries(app.info.salas).find(([, sa]) => sa && caraEn([sa.cara], w));
         h = sala ? { tipo: 'espacio', id: sala[0] } : null;
         svg.dataset.sobre = h ? 'espacio' : '';
@@ -361,6 +376,7 @@ export function instalarInteraccion(app) {
     const herr = est.bloqueado && est.herr !== 'medir' ? 'sel' : est.herr;
     const t = est.temp;
 
+    if (est.modo === 'red' && est.herr !== 'medir') { red.clic(pul); return; }
     if (est.modo === 'anotar' && herr !== 'medir') {
       // con el dedo (si solo dibuja el lápiz) se pueden abrir las notas
       app.seleccionar(pul.toque?.tipo === 'nota' ? { tipo: 'nota', id: pul.toque.id } : null);
@@ -368,6 +384,12 @@ export function instalarInteraccion(app) {
     }
     if (herr === 'sel') {
       const toque = pul.toque;
+      // en Ver se pueden consultar los equipos y los cables; un paso de planta lleva a la otra
+      if (est.modo === 'ver' && ES_RED.includes(toque?.tipo)) {
+        if (toque.tipo === 'paso') app.irAPlanta(toque.ed, toque.pl, toque.ed !== est.edId, true);
+        else app.seleccionar({ tipo: toque.tipo, id: toque.id });
+        return;
+      }
       // en Ver, tocar un muro o una puerta enseña la sala de al lado: es lo que interesa al consultar
       if (est.modo === 'ver' && toque && toque.tipo !== 'espacio' && toque.tipo !== 'nota') {
         const sala = Object.entries(app.info.salas).find(([, s]) => s && caraEn([s.cara], w));
@@ -473,8 +495,10 @@ export function instalarInteraccion(app) {
     app.pintarSobre();
   }
 
-  /** Termina la acción en curso. Devuelve true si había algo que terminar. */
-  function terminar() {
+  /** Termina la acción en curso. Devuelve true si había algo que terminar. Un cable a medias
+   *  se acaba (botón «Terminar», botón derecho) o, con «cancelar» (Esc), se descarta. */
+  function terminar(cancelar = false) {
+    if (est.temp.cable) return red.terminar(cancelar);
     const t = est.temp;
     const habia = !!(t.cadena?.length || t.medir);
     est.temp = {};
@@ -482,10 +506,11 @@ export function instalarInteraccion(app) {
     if (habia) app.pintarOpciones();
     return habia;
   }
-  app.terminar = terminar;
+  app.terminar = () => terminar(false);
 
   // ------------------------------------------------------------------ arrastres
   function empezarArrastre(pul) {
+    if (est.modo === 'red') return red.arrastre(pul) || panDesde(pul.s);
     const toque = pul.toque;
     const p = app.planta();
     const editable = !est.bloqueado && est.herr === 'sel';

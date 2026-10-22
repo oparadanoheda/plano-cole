@@ -63,6 +63,37 @@ export const CSS_PLANO = `
 .contexto { opacity: .9; }
 .letra-nodo { font: 700 11px system-ui, sans-serif; fill: #2457d6; text-anchor: middle; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
 .suelto { fill: rgba(220, 38, 38, .12); stroke: #dc2626; stroke-width: 1.8; }
+
+.cable { fill: none; stroke-width: 2.6; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
+.cable.proyecto { stroke-dasharray: 7 5; }
+.cable.averia { stroke: #dc2626; }
+.cable.sin-uso { stroke: #9ca3af; }
+.cable.sel { stroke-width: 3.6; }
+.cable.tenue { opacity: .18; }
+.cable-halo { fill: none; stroke: #fff; stroke-width: 7; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; opacity: .95; }
+.cable-halo.sel { stroke: rgba(36, 87, 214, .3); stroke-width: 11; }
+.cobertura { fill: rgba(8, 145, 178, .07); stroke: rgba(8, 145, 178, .5); stroke-width: 1; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.eq-fondo { stroke: #fff; stroke-width: 1.5; }
+.eq-glifo { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.eq-anillo { fill: rgba(36, 87, 214, .16); stroke: #2457d6; stroke-width: 2.5; }
+.eq-nombre { font: 600 11.5px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; fill: #1d2330; paint-order: stroke; stroke: rgba(255, 255, 255, .92); stroke-width: 3.5px; stroke-linejoin: round; }
+.eq.tenue { opacity: .28; }
+.eq.ajeno { opacity: .8; }
+.eq-insignia circle { fill: #fff; stroke: #334155; stroke-width: 1.5; }
+.eq-insignia text { font: 700 10px system-ui, sans-serif; fill: #334155; text-anchor: middle; }
+.paso rect { fill: #1d2330; stroke: #fff; stroke-width: 1.5; }
+.paso text { font: 700 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #fff; text-anchor: middle; }
+.paso.tenue { opacity: .3; }
+.extremo-suelto { fill: #fff; stroke: #dc2626; stroke-width: 2; }
+.extremo-suelto.tenue { opacity: .3; }
+.vertice { fill: #fff; stroke: #2457d6; stroke-width: 2; }
+.vertice.sel { fill: #2457d6; }
+.medio circle { fill: rgba(255, 255, 255, .92); stroke: #2457d6; stroke-width: 1.5; }
+.medio path { stroke: #2457d6; stroke-width: 1.6; stroke-linecap: round; }
+.dib-cable { fill: none; stroke: #2457d6; stroke-width: 2.5; stroke-dasharray: 7 5; stroke-linecap: round; stroke-linejoin: round; }
+.dib-punto { fill: #fff; stroke: #2457d6; stroke-width: 2; }
+.dib-largo rect { fill: #1d2330; }
+.dib-largo text { font: 600 12px system-ui, sans-serif; fill: #fff; font-variant-numeric: tabular-nums; }
 `;
 
 /** Estilo para los planos exportados: rótulos en metros (escala de papel). */
@@ -70,4 +101,9 @@ export const CSS_EXPORT = CSS_PLANO + `
 .ex-nombre { font: 600 0.34px system-ui, Arial, sans-serif; fill: #1d2330; text-anchor: middle; }
 .ex-sup { font: 0.26px system-ui, Arial, sans-serif; fill: #6b7280; text-anchor: middle; }
 .ex-nota { font: 600 0.3px system-ui, Arial, sans-serif; fill: #7c3d06; }
+.ex-cable { fill: none; stroke-width: 0.07; stroke-linecap: round; stroke-linejoin: round; }
+.ex-cable.proyecto { stroke-dasharray: 0.35 0.25; }
+.ex-eq { font: 600 0.3px system-ui, Arial, sans-serif; fill: #1d2330; paint-order: stroke; stroke: #fff; stroke-width: 0.06px; }
+.ex-paso { fill: #1d2330; }
+.ex-paso-t { font: 700 0.26px system-ui, Arial, sans-serif; fill: #1d2330; }
 `;

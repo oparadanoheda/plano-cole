@@ -1,10 +1,12 @@
 # Plano del cole
 
-App web instalable (PWA) para mantener el plano de un centro educativo. Tiene cuatro modos:
+App web instalable (PWA) para mantener el plano de un centro educativo. Tiene cinco modos:
 **Ver** (fichas de sala, búsqueda), **Editar** (muros que se mueven, puertas, ventanas, salas con
 superficie calculada, versiones por obra), **Anotar** (tinta con presión para el Apple Pencil, rotulador,
-textos, flechas y notas, por capas) y **3D**. Debajo puede ir la ortofoto PNOA, y también las capas del
-Plan de Autoprotección. Funciona sin conexión en Windows (Edge/Chrome) y en iPad (Safari).
+textos, flechas y notas, por capas), **Red** (armarios, router, switches con su mapa de puertos, puntos
+WiFi, tomas y el recorrido de los cables entre plantas y edificios, con longitudes, rastreo hasta el
+router, esquema en árbol y listados CSV) y **3D**. Debajo puede ir la ortofoto PNOA, y también las capas
+del Plan de Autoprotección. Funciona sin conexión en Windows (Edge/Chrome) y en iPad (Safari).
 
 **El programa no lleva datos.** El plano vive en un archivo `.plano.json` que guarda cada
 usuario en su equipo; la app solo lo abre y lo guarda en local (IndexedDB + el archivo).
@@ -26,6 +28,10 @@ js/estilo.js            estilo del plano (también se incrusta en los SVG export
 js/satelite.js          ortofoto PNOA: teselas bajo el plano, georreferencia, mosaico para el 3D
 js/anotar.js            modo Anotar: trazos con presión, rotulador, texto, flechas, borrador
 js/tresd.js             modo 3D con Three.js (se carga solo al entrar en el modo)
+js/red.js               red: modelo, recorridos y longitudes, esquema, comprobación del archivo, CSV
+js/redvista.js          red: dibujo sobre el plano (cables en metros, equipos y pasos en pantalla)
+js/redherr.js           red: colocar equipos, tender cables entre plantas, mover puntos
+js/redpanel.js          red: fichas de equipo y cable, mapa de puertos, pestaña Esquema
 vendor/                 Three.js 0.170.0 y OrbitControls (MIT, ver LICENSE-three.txt)
 sw.js, manifest…        instalación y funcionamiento sin conexión (también cachea las teselas)
 herramientas/importar_pau.py   importa los planos del PAU (PDF vectorial con capas)
@@ -63,10 +69,16 @@ worker necesitan un servidor.)
       calco:     { origen, capas: {arquitectura, pci, evacuacion, sectores} } } ] } ],
   sitio: { ancla: {x, y, lat, lon}, rumbo },    georreferencia; rumbo = hacia dónde mira el «arriba»
   capasAnotacion: [ {id, nombre, visible} ],
-  versiones: [ {id, nombre, fecha, plantas: {plantaId: contenido}} ] }
+  red: { equipos: { id: {tipo, nombre, pl, x, y, en, puertos, modelo, ip, notas, h, notasPuertos…} },
+         cables:  { id: {etiqueta, tipo, estado, canal, notas, a: {eq, pto}, b: {eq, pto},
+                         tramos: [ {pl, pts: [x, y, …]} ]} } },
+  versiones: [ {id, nombre, fecha, plantas: {plantaId: contenido}, red} ] }
 ```
 
 - Los trazos guardan `[x, y, presión, …]` en metros.
+- Red: un equipo con `en` está dentro de ese armario (sin posición propia). Los extremos de un cable
+  conectados a un equipo no se guardan en los tramos (se toman del equipo); `a` o `b` a `null` es un
+  extremo suelto. Entre un tramo y el siguiente el cable cambia de planta por el mismo punto del sitio.
 
 - Los muros comparten nodos: mover un nodo arrastra todos los muros que llegan a él.
 - `pos` de una abertura = distancia de su centro al nodo `a` del muro.

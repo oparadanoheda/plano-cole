@@ -1,7 +1,12 @@
 // Arranque y coordinación de la app «Plano del cole».
-// Cuatro modos: Ver (consultar), Editar (cambiar el plano), Anotar (dibujar encima) y 3D.
+// Cinco modos: Ver (consultar), Editar (cambiar el plano), Anotar (dibujar encima),
+// Red (equipos y cableado) y 3D.
 
 import * as M from './modelo.js';
+import * as R from './red.js';
+import { pintarRedMundo, pintarRedSobre, htmlRedExport } from './redvista.js';
+import { HERR_RED } from './redherr.js';
+import { pintarEsquema, irAEquipo, irACable } from './redpanel.js';
 import { salas } from './espacios.js';
 import { pintarCalco, pintarModelo, htmlModelo, pintarSeleccion, pintarHover, pintarSobre, pintarRejilla, aplicarVista, caja, aPantalla } from './vista.js';
 import { instalarInteraccion } from './herramientas.js';
@@ -24,11 +29,16 @@ const est = {
   capas: {
     calco: false, calcoOpac: 0.4, pci: false, evacuacion: false, sectores: false, espacios: true, muros: true,
     rotulos: true, cotas: true, rejilla: true, sueltos: true, satelite: true, sateliteOpac: 1,
+    red: true, wifi: false,
   },
   bloqueado: true, orto: true, paso: 0.05,
   grosor: 0.1, tipoMuro: 'tabique', estadoNuevo: 'medido', ancla: 'a',
   anot: { herr: 'boli', color: '#d92d20', grosor: 1, capa: null, soloLapiz: false, lapizVisto: false },
   anotSel: null, ajuste: null, capasAnotVisibles: new Set(),
+  // red: cómo se tienden los cables nuevos; qué se resalta (foco); rastreo o dependientes;
+  // punto del cable y puerto seleccionados
+  redOp: { tipo: 'cat6', estado: 'servicio', canal: 'techo', fin: 'toma', orto: true },
+  redFoco: null, redVer: null, redVert: null, redPuerto: null,
   edId: null, plId: null,
 };
 
@@ -55,6 +65,7 @@ let calcoDibujado = null;
 let marcoPendiente = false;
 const gCalco = $('#g-calco'), gModelo = $('#g-modelo'), gSel = $('#g-sel'), gSobre = $('#g-sobre'), gMundo = $('#mundo');
 const gRejilla = $('#g-rejilla'), gHover = $('#g-hover'), gAnot = $('#g-anot'), gContexto = $('#g-contexto');
+const gRed = $('#g-red'), gRedSobre = $('#g-red-sobre');
 const satelite = new CapaSatelite($('#g-satelite'), app);
 
 app.recalcular = () => { const p = app.planta(); app.info = p ? salas(p) : { caras: [], salas: {} }; };
@@ -76,9 +87,10 @@ app.pintar = ({ calco = false } = {}) => {
     pintarAnotaciones(gAnot, p, app);
     pintarSeleccion(gSel, p, est.sel, app.info);
     pintarHover(gHover, p, est.hover, app.info);
+    pintarRedMundo(gRed, app);
     pintarContexto();
   } else {
-    gModelo.innerHTML = gSel.innerHTML = gAnot.innerHTML = gHover.innerHTML = gContexto.innerHTML = '';
+    gModelo.innerHTML = gSel.innerHTML = gAnot.innerHTML = gHover.innerHTML = gContexto.innerHTML = gRed.innerHTML = '';
   }
   app.pintarVista();
 };
@@ -112,8 +124,9 @@ app.pintarSobre = () => {
     const p = app.planta();
     pintarRejilla(gRejilla, est, app.svg.clientWidth, app.svg.clientHeight);
     satelite.pintar();
-    if (!p) { gSobre.innerHTML = ''; return; }
+    if (!p) { gSobre.innerHTML = gRedSobre.innerHTML = ''; return; }
     pintarSobre(gSobre, p, est, app.info, app.svg.clientWidth, app.svg.clientHeight);
+    pintarRedSobre(gRedSobre, app, app.svg.clientWidth, app.svg.clientHeight);
     pintarBarraContexto();
   });
 };
@@ -161,21 +174,29 @@ app.encuadrar = () => {
 
 // ---------------------------------------------------------------------------- cambios e historial
 let temporizador = null;
-app.antes = () => {
-  const p = app.planta();
-  if (!p) return;
-  hist.pila.push({ plId: p.id, json: M.contenido(p) });
+const apilar = (e) => {
+  hist.pila.push(e);
   if (hist.pila.length > 150) hist.pila.shift();
   hist.rehacer = [];
   pintarBotonesHistorial();
 };
+app.antes = () => {
+  const p = app.planta();
+  if (p) apilar({ plId: p.id, json: M.contenido(p) });
+};
+/** Antes de cambiar la red (es de todo el centro, no de una planta). */
+app.antesRed = () => apilar({ red: JSON.stringify(app.doc.red) });
 
 /** Algo ha cambiado en el modelo. «ligero» durante los arrastres: sin panel ni guardado. */
 app.cambio = (ligero = false) => {
   app.recalcular();
+  R.olvidarSalas();
   const p = app.planta();
   if (est.sel && !existe(p, est.sel)) est.sel = null;
   if (est.anotSel && !p?.anotaciones.some((a) => a.id === est.anotSel)) est.anotSel = null;
+  const c = est.sel?.tipo === 'cable' && app.doc.red.cables[est.sel.id];
+  if (est.redVert && !(c && est.redVert.i < (c.tramos[est.redVert.t]?.pts.length ?? 0) / 2)) est.redVert = null;
+  app.focoRed();
   app.pintar();
   if (ligero) return;
   app.panel();
@@ -192,6 +213,8 @@ function existe(p, sel) {
     case 'espacio': return !!p.espacios[sel.id];
     case 'pilar': return !!p.pilares[sel.id];
     case 'nota': return !!p.elementos[sel.id];
+    case 'equipo': return !!app.doc.red.equipos[sel.id];
+    case 'cable': return !!app.doc.red.cables[sel.id];
   }
   return false;
 }
@@ -199,6 +222,13 @@ function existe(p, sel) {
 function deshacerRehacer(de, a) {
   const e = de.pop();
   if (!e) return false;
+  if (e.red !== undefined) {
+    a?.push({ red: JSON.stringify(app.doc.red) });
+    app.doc.red = JSON.parse(e.red);
+    app.cambio();
+    pintarBotonesHistorial();
+    return true;
+  }
   const r = buscarPlanta(e.plId);
   if (!r) return false;
   a?.push({ plId: e.plId, json: M.contenido(r.p) });
@@ -208,7 +238,7 @@ function deshacerRehacer(de, a) {
   pintarBotonesHistorial();
   return true;
 }
-const puedeDeshacer = () => est.modo === 'editar' || est.modo === 'anotar';
+const puedeDeshacer = () => est.modo === 'editar' || est.modo === 'anotar' || est.modo === 'red';
 app.deshacer = (silencioso = false) => {
   if (!puedeDeshacer() && !silencioso) return;
   deshacerRehacer(hist.pila, silencioso ? null : hist.rehacer);
@@ -250,13 +280,42 @@ function pintarEstadoGuardado() {
 
 // ---------------------------------------------------------------------------- selección
 app.seleccionar = (sel) => {
+  if (sel?.tipo !== est.sel?.tipo || sel?.id !== est.sel?.id) { est.redVer = null; est.redVert = null; est.redPuerto = null; }
   est.sel = sel;
+  app.focoRed();
   const p = app.planta();
-  if (p) pintarSeleccion(gSel, p, sel, app.info);
+  if (p) { pintarSeleccion(gSel, p, sel, app.info); pintarRedMundo(gRed, app); }
   app.pintarSobre();
   app.panel();
   if (innerWidth <= 820) document.body.classList.toggle('sin-panel', !sel);
   else if (sel && est.modo !== 'anotar') document.body.classList.remove('sin-panel');
+};
+
+/** Qué se resalta de la red: lo conectado a lo seleccionado, o el rastreo o lo que depende. */
+app.focoRed = () => {
+  const red = app.doc?.red, sel = est.sel;
+  est.redFoco = null;
+  if (!red || !sel) return;
+  if (sel.tipo === 'equipo' && red.equipos[sel.id]) {
+    if (est.redVer?.id === sel.id) {
+      const arb = R.arbol(red);
+      const r = est.redVer.modo === 'rastreo' ? R.camino(arb, sel.id) : R.descendientes(arb, sel.id);
+      est.redFoco = { equipos: new Set([sel.id, ...r.equipos]), cables: new Set(r.cables) };
+      return;
+    }
+    const propios = [sel.id, ...Object.keys(red.equipos).filter((id) => red.equipos[id].en === sel.id)];
+    const equipos = new Set(propios), cables = new Set();
+    for (const [cid, c] of Object.entries(red.cables)) {
+      if (!propios.includes(c.a?.eq) && !propios.includes(c.b?.eq)) continue;
+      cables.add(cid);
+      if (c.a) equipos.add(c.a.eq);
+      if (c.b) equipos.add(c.b.eq);
+    }
+    est.redFoco = { equipos, cables };
+  } else if (sel.tipo === 'cable' && red.cables[sel.id]) {
+    const c = red.cables[sel.id];
+    est.redFoco = { equipos: new Set([c.a?.eq, c.b?.eq].filter(Boolean)), cables: new Set([sel.id]) };
+  }
 };
 
 app.seleccionarDesde3D = (edId, plId, esp) => {
@@ -267,6 +326,7 @@ app.seleccionarDesde3D = (edId, plId, esp) => {
 app.panel = () => {
   pintarPanel(app);
   if (!$('#pop-capas').hidden) pintarCapas(app);
+  if (!$('#pest-esquema').hidden) pintarEsquema(app);
 };
 
 app.enfocarPanel = () => {
@@ -279,6 +339,21 @@ app.enfocarPanel = () => {
 app.borrarSeleccion = () => {
   const p = app.planta();
   if (!p) return;
+  if (est.sel?.tipo === 'equipo' || est.sel?.tipo === 'cable') {
+    if (est.modo !== 'red') return;
+    const red = app.doc.red, { tipo, id } = est.sel;
+    // con un punto del cable seleccionado, se quita ese punto
+    if (tipo === 'cable' && est.redVert && app.redHerr.quitarVertice()) return;
+    app.antesRed();
+    if (tipo === 'cable') delete red.cables[id];
+    else {
+      const n = R.borrarEquipo(red, R.indicePlantas(app.doc), id);
+      if (n) app.aviso(n === 1 ? 'Un cable se ha quedado con un extremo suelto.' : `${n} cables se han quedado con un extremo suelto.`);
+    }
+    est.sel = null;
+    app.cambio();
+    return;
+  }
   if (est.modo === 'anotar') {
     if (anotador.borrarSeleccion()) return;
     if (est.sel?.tipo === 'nota') { app.antes(); delete p.elementos[est.sel.id]; est.sel = null; app.cambio(); }
@@ -304,10 +379,34 @@ function pintarBarraContexto() {
   const b = $('#barra-contexto');
   const p = app.planta();
   const sel = est.sel;
-  if (est.modo !== 'editar' || est.herr !== 'sel' || !sel || !p || est.arrastrando || est.ajuste) { b.hidden = true; return; }
+  if ((est.modo !== 'editar' && est.modo !== 'red') || est.herr !== 'sel' || !sel || !p || est.arrastrando || est.ajuste) { b.hidden = true; return; }
   let pos = null, html = '';
   const borrar = '<button data-ctx="borrar" class="peligro"><svg class="ic"><use href="#i-papelera"/></svg>Borrar</button>';
-  if (sel.tipo === 'muro' && p.muros[sel.id]) {
+  const red = app.doc.red;
+  if (est.modo === 'red') {
+    if (sel.tipo === 'equipo' && red.equipos[sel.id]) {
+      const icono = app.redIconos?.find((q) => q.id === (red.equipos[sel.id].en || sel.id));
+      if (icono) {
+        pos = icono.pos;
+        html = `<span class="medida">${esc(red.equipos[sel.id].nombre)}</span><button data-ctx="red-cable"><svg class="ic"><use href="#i-cable"/></svg>Cable</button>` +
+          `<button data-ctx="red-rastrear">Rastrear</button>${borrar}`;
+      }
+    } else if (sel.tipo === 'cable' && red.cables[sel.id]) {
+      const c = red.cables[sel.id], v = est.redVert, t = v && c.tramos[v.t];
+      if (t && t.pl === p.id) {
+        pos = { x: t.pts[v.i * 2], y: t.pts[v.i * 2 + 1] };
+        html = `<button data-ctx="red-quitar-punto">Quitar punto</button>${borrar}`;
+      } else {
+        const ctx = R.contexto(app.doc);
+        const tr = R.recorrido(red, ctx.ip, c).tramos.find((x) => x.pl === p.id && x.pts.length >= 2);
+        if (tr) {
+          const i = Math.floor((tr.pts.length - 2) / 2);
+          pos = mul(add(tr.pts[i], tr.pts[i + 1]), 0.5);
+          html = `<span class="medida">≈ ${Math.round(R.longitud(ctx, c).total)} m</span>${borrar}`;
+        }
+      }
+    }
+  } else if (sel.tipo === 'muro' && p.muros[sel.id]) {
     const m = p.muros[sel.id];
     const A = p.nodos[m.a], B = p.nodos[m.b];
     pos = mul(add(A, B), 0.5);
@@ -350,7 +449,19 @@ $('#barra-contexto').addEventListener('click', (e) => {
   const sel = est.sel;
   const acc = b.dataset.ctx;
   if (acc === 'borrar') app.borrarSeleccion();
-  else if (acc === 'renombrar') app.enfocarPanel();
+  else if (acc === 'red-quitar-punto') app.redHerr.quitarVertice();
+  else if (acc === 'red-cable' && sel?.tipo === 'equipo') {
+    const id = sel.id;
+    app.herramienta('cable');
+    app.redHerr.cableDesde(id);
+  } else if (acc === 'red-rastrear' && sel?.tipo === 'equipo') {
+    if (!R.arbol(app.doc.red).padre.get(sel.id)) { app.aviso('No está conectado a nada por encima: es el principio de la red, o le falta el cable.'); return; }
+    est.redVer = est.redVer?.modo === 'rastreo' && est.redVer.id === sel.id ? null : { modo: 'rastreo', id: sel.id };
+    app.focoRed();
+    app.pintar();
+    app.panel();
+    document.body.classList.remove('sin-panel');
+  } else if (acc === 'renombrar') app.enfocarPanel();
   else if (acc === 'partir' || acc === 'lado' || acc === 'bisagra') accionPanel(app, acc);
   else if ((acc === 'puerta' || acc === 'ventana') && sel?.tipo === 'muro') {
     const m = p.muros[sel.id];
@@ -387,7 +498,16 @@ const PISTAS = {
   ver: 'Toca una sala para ver su ficha. Busca arriba por nombre o grupo.',
   anotar: 'Dibuja con el lápiz o el ratón. Con dos dedos mueves y haces zoom.',
   anotarLapiz: 'El Apple Pencil dibuja; el dedo mueve el plano.',
+  red: 'Toca un equipo o un cable para ver su ficha. Arrastra un equipo para moverlo: sus cables le siguen.',
+  cable: 'Toca un equipo (o un punto) para empezar, ve tocando las esquinas y acaba en otro equipo. Para subir o bajar, cambia de planta. Doble toque o «Terminar» acaba.',
+  armario: 'Toca donde está el armario (rack).',
+  router: 'Toca donde está el router. Si tocas un armario, va dentro.',
+  switch: 'Toca donde está el switch. Si tocas un armario, va dentro.',
+  ap: 'Toca donde está el punto de acceso WiFi.',
+  toma: 'Toca donde está la toma de red.',
+  equipo: 'Toca donde está el ordenador, la impresora o el proyector.',
 };
+const FINALES = { toma: 'toma nueva', ap: 'WiFi nuevo', equipo: 'equipo nuevo', libre: 'suelto' };
 
 app.modo = async (m) => {
   if (!app.doc && m !== 'ver') return;
@@ -397,13 +517,17 @@ app.modo = async (m) => {
   if (est.ajuste) app.terminarAjuste(true);
   est.modo = m;
   est.bloqueado = m !== 'editar';
-  document.body.classList.remove('modo-ver', 'modo-editar', 'modo-anotar', 'modo-3d');
+  document.body.classList.remove('modo-ver', 'modo-editar', 'modo-anotar', 'modo-red', 'modo-3d');
   document.body.classList.add('modo-' + m);
   document.querySelectorAll('[data-modo]').forEach((b) => b.classList.toggle('activo', b.dataset.modo === m));
   est.temp = {};
   est.hover = null;
   est.anotSel = null;
+  // en Editar y Anotar la red no se toca: fuera su selección
+  if ((m === 'editar' || m === 'anotar') && (est.sel?.tipo === 'equipo' || est.sel?.tipo === 'cable')) { est.sel = null; app.focoRed(); }
+  if (m !== 'red' && m !== 'ver' && !$('#pest-esquema').hidden) document.querySelector('.pestanas [data-pest="props"]').click();
   if (m === 'editar') app.herramienta(est.herrEditar || 'sel');
+  else if (m === 'red') app.herramienta(est.herrRed || 'sel');
   else { est.herr = 'sel'; app.svg.dataset.herr = 'sel'; pintarOpciones(); }
   if (m === 'anotar' && innerWidth <= 820) document.body.classList.add('sin-panel');
   $('#b-medir').classList.toggle('activo', est.herr === 'medir');
@@ -419,10 +543,12 @@ app.modo = async (m) => {
 };
 
 app.herramienta = (h) => {
-  if (h !== 'medir' && h !== 'sel' && est.modo !== 'editar') app.modo('editar');
+  if (HERR_RED.includes(h)) { if (est.modo !== 'red') app.modo('red'); }
+  else if (h !== 'medir' && h !== 'sel' && est.modo !== 'editar') app.modo('editar');
   if (h === 'medir' && est.modo === 'anotar') app.modo('ver');
   est.herr = h;
   if (est.modo === 'editar') est.herrEditar = h;
+  if (est.modo === 'red') est.herrRed = h;
   est.temp = {};
   app.svg.dataset.herr = h;
   document.querySelectorAll('[data-herr]').forEach((b) => b.classList.toggle('activa', b.dataset.herr === h));
@@ -435,8 +561,19 @@ function pintarOpciones() {
   const o = $('#opciones');
   const h = est.herr;
   const pista = est.modo === 'anotar' ? (est.anot.soloLapiz ? PISTAS.anotarLapiz : PISTAS.anotar)
-    : est.modo === 'ver' && h === 'sel' ? PISTAS.ver : PISTAS[h] || '';
+    : est.modo === 'ver' && h === 'sel' ? PISTAS.ver : est.modo === 'red' && h === 'sel' ? PISTAS.red : PISTAS[h] || '';
   $('#est-pista').textContent = pista;
+  if (est.modo === 'red' && h === 'cable') {
+    // cómo son los cables que se tienden
+    const op = est.redOp;
+    const lista = (k, obj) => `<select data-opr="${k}">${Object.entries(obj).map(([v, t]) => `<option value="${v}"${op[k] === v ? ' selected' : ''}>${esc(typeof t === 'string' ? t : t.nombre)}</option>`).join('')}</select>`;
+    o.innerHTML = `<label>Cable ${lista('tipo', R.TIPOS_CABLE)}</label><label>Va por ${lista('canal', R.CANALES)}</label>
+      <label>Estado ${lista('estado', R.ESTADOS_CABLE)}</label><label title="Qué se pone donde acaba el cable cuando no acaba en un equipo">Final ${lista('fin', FINALES)}</label>
+      <label class="interruptor"><input type="checkbox" data-opr="orto" ${op.orto ? 'checked' : ''}> Ortogonal</label>` +
+      (est.temp.cable ? '<button class="btn primario" data-op-terminar style="height:32px">Terminar</button>' : '');
+    o.hidden = false;
+    return;
+  }
   if (est.modo !== 'editar' || (h !== 'muro' && h !== 'medir')) { o.hidden = true; return; }
   let html = '';
   if (h === 'muro') {
@@ -459,6 +596,12 @@ $('#opciones').addEventListener('click', (e) => {
   if (e.target.closest('[data-op-terminar]')) app.terminar();
 });
 $('#opciones').addEventListener('change', (e) => {
+  const kr = e.target.dataset.opr;
+  if (kr) {
+    est.redOp[kr] = kr === 'orto' ? e.target.checked : e.target.value;
+    app.guardarPreferencias();
+    return;
+  }
   const k = e.target.dataset.op;
   if (!k) return;
   if (k === 'grosor') est.grosor = +e.target.value;
@@ -671,6 +814,7 @@ function pintarBarra3D() {
     <label class="interruptor"><input type="checkbox" data-op3d="separar" ${op.separar ? 'checked' : ''}> Separar</label>
     <label class="interruptor"><input type="checkbox" data-op3d="foto" ${op.foto ? 'checked' : ''}> Foto aérea</label>
     <label class="interruptor"><input type="checkbox" data-op3d="nombres" ${op.nombres ? 'checked' : ''}> Nombres</label>
+    ${Object.keys(app.doc.red.equipos).length || Object.keys(app.doc.red.cables).length ? `<label class="interruptor"><input type="checkbox" data-op3d="red" ${op.red ? 'checked' : ''}> Red</label>` : ''}
     <button class="btn-ic" data-v3d="cenital" title="Vista desde arriba"><svg class="ic"><use href="#i-abajo"/></svg></button>
     <button class="btn-ic" data-v3d="encuadrar" title="Vista en perspectiva"><svg class="ic"><use href="#i-cubo"/></svg></button>
     <button class="btn-ic" data-v3d="captura" title="Guardar imagen"><svg class="ic"><use href="#i-camara"/></svg></button>`;
@@ -746,13 +890,19 @@ $('#pisos').addEventListener('click', (e) => {
   else if ('pisoNuevo' in b.dataset) app.nuevaPlanta();
 });
 
-function irAPlanta(edId, plId, encuadrar) {
+function irAPlanta(edId, plId, encuadrar, mantenerSel = false) {
   const cambiaEdificio = edId !== est.edId;
+  const anterior = est.plId;
   if (est.ajuste && cambiaEdificio) app.terminarAjuste(true);
   est.edId = edId;
   est.plId = plId;
-  est.sel = null;
-  est.temp = {};
+  // un equipo o un cable de la red siguen seleccionados al cambiar de planta (para seguirlos)
+  if (!mantenerSel && est.sel?.tipo !== 'equipo' && est.sel?.tipo !== 'cable') est.sel = null;
+  // si se está tendiendo un cable, sigue en la planta nueva: sube o baja por el último punto
+  const cable = est.temp.cable;
+  est.temp = cable ? { cable } : {};
+  if (cable) app.redHerr.cambioDePlanta(anterior, plId);
+  est.redVert = null;
   est.anotSel = null;
   est.hover = null;
   app.recalcular();
@@ -789,6 +939,10 @@ app.nuevoEdificio = () => {
 app.borrarPlanta = () => {
   const ed = app.edificio(), p = app.planta();
   if (!confirm(`¿Borrar «${p.nombre}» de «${ed.nombre}»? Se puede recuperar desde una versión guardada, pero no con Deshacer.`)) return;
+  // con ella se van sus equipos de red y los tramos de cable que pasan por ella
+  R.quitarPlanta(app.doc.red, R.indicePlantas(app.doc), p.id);
+  hist.pila = hist.pila.filter((h) => h.red === undefined);
+  hist.rehacer = hist.rehacer.filter((h) => h.red === undefined);
   ed.plantas = ed.plantas.filter((x) => x !== p);
   if (!ed.plantas.length) app.doc.edificios = app.doc.edificios.filter((x) => x !== ed);
   hist.pila = hist.pila.filter((h) => h.plId !== p.id);
@@ -802,7 +956,7 @@ app.borrarPlanta = () => {
 app.guardarVersion = (nombre) => {
   const plantas = {};
   for (const { p } of M.plantas(app.doc)) plantas[p.id] = M.contenido(p);
-  app.doc.versiones.push({ id: M.nuevoId('v'), nombre, fecha: new Date().toISOString(), plantas });
+  app.doc.versiones.push({ id: M.nuevoId('v'), nombre, fecha: new Date().toISOString(), plantas, red: JSON.stringify(app.doc.red) });
   marcarSucio();
   app.aviso(`Versión «${nombre}» guardada.`, 'ok');
 };
@@ -812,6 +966,9 @@ app.restaurarVersion = (id) => {
   if (!v || !confirm(`¿Volver a la versión «${v.nombre}»? Antes se guardará automáticamente el estado actual como versión.`)) return;
   app.guardarVersion('Antes de restaurar «' + v.nombre + '»');
   for (const { p } of M.plantas(app.doc)) if (v.plantas[p.id]) M.restaurar(p, v.plantas[p.id]);
+  // las versiones de antes de la red no la traen: entonces se deja la de ahora
+  if (v.red) app.doc.red = R.redDeVersion(app.doc, v.red);
+  est.temp = {};
   hist.pila = []; hist.rehacer = [];
   pintarBotonesHistorial();
   app.cambio();
@@ -838,8 +995,20 @@ $('#buscar').addEventListener('input', (e) => {
       if (normal(es.nombre).includes(q) || normal(es.grupo).includes(q)) resultados.push({ ed, p, id, es });
     }
   }
-  cajaR.innerHTML = resultados.slice(0, 30).map((r, i) => `<button data-i="${i}" class="${i === 0 ? 'activa' : ''}">${esc(r.es.nombre)}${r.es.grupo ? ' · ' + esc(r.es.grupo) : ''}<small>${esc(r.ed.nombre)} · ${esc(r.p.nombre)}</small></button>`).join('')
-    || '<div class="vacio">No hay ninguna sala con ese nombre.</div>';
+  // equipos (por nombre, modelo o IP) y cables (por etiqueta)
+  const red = app.doc.red;
+  const ctx = R.contexto(app.doc);
+  for (const [id, e] of Object.entries(red.equipos)) {
+    if ([e.nombre, e.modelo, e.ip].some((t) => normal(t).includes(q))) {
+      resultados.push({ red: 'equipo', id, titulo: e.nombre, sub: `${R.nombreTipo(e)} · ${R.textoUbicacion(ctx, id)}` });
+    }
+  }
+  for (const [id, c] of Object.entries(red.cables)) {
+    if (normal(c.etiqueta).includes(q)) resultados.push({ red: 'cable', id, titulo: c.etiqueta, sub: `Cable · ${R.textoExtremo(red, c.a)} → ${R.textoExtremo(red, c.b)}` });
+  }
+  cajaR.innerHTML = resultados.slice(0, 30).map((r, i) => `<button data-i="${i}" class="${i === 0 ? 'activa' : ''}">` +
+    (r.red ? `${esc(r.titulo)}<small>${esc(r.sub)}</small>` : `${esc(r.es.nombre)}${r.es.grupo ? ' · ' + esc(r.es.grupo) : ''}<small>${esc(r.ed.nombre)} · ${esc(r.p.nombre)}</small>`) +
+    '</button>').join('') || '<div class="vacio">No hay ninguna sala ni ningún equipo con ese nombre.</div>';
   cajaR.hidden = false;
 });
 $('#buscar').addEventListener('keydown', (e) => {
@@ -858,6 +1027,9 @@ document.addEventListener('pointerdown', (e) => {
 function irAResultado(r) {
   $('#resultados').hidden = true;
   $('#buscar').blur();
+  if (r.red === 'equipo') { irAEquipo(app, r.id); return; }
+  if (r.red === 'cable') { irACable(app, r.id); return; }
+  document.querySelector('.pestanas [data-pest="props"]').click();
   if (est.modo === '3d') app.modo('ver');
   if (r.p.id !== est.plId) irAPlanta(r.ed.id, r.p.id, r.ed.id !== est.edId);
   const v = est.vista;
@@ -871,7 +1043,7 @@ app.enfocarBusqueda = () => { $('#buscar').focus(); $('#buscar').select(); };
 
 // ---------------------------------------------------------------------------- archivo
 function cargarDocumento(doc, { nombre, manejador = null, sucio = false, plId, edId, vista } = {}) {
-  app.doc = M.normalizar(doc);
+  app.doc = R.normalizarRed(M.normalizar(doc));
   app.archivo = { nombre: nombre || 'plano.plano.json', manejador, sucio, guardadoLocal: null };
   hist.pila = []; hist.rehacer = [];
   const primera = app.doc.edificios[0];
@@ -881,6 +1053,8 @@ function cargarDocumento(doc, { nombre, manejador = null, sucio = false, plId, e
   est.sel = null;
   est.temp = {};
   est.anotSel = null;
+  est.redFoco = est.redVer = est.redVert = est.redPuerto = null;
+  R.olvidarSalas();
   est.capasAnotVisibles = new Set(app.doc.capasAnotacion.filter((c) => c.visible).map((c) => c.id));
   if (!app.doc.capasAnotacion.some((c) => c.id === est.anot.capa)) est.anot.capa = app.doc.capasAnotacion[0].id;
   satelite.vaciar();
@@ -965,6 +1139,8 @@ function svgDePlanta(p, { conCalco = est.capas.calco, cajetin = false } = {}) {
     if (s) rot += `<text class="ex-sup" x="${e.x}" y="${e.y + (e.grupo ? 0.68 : 0.36)}">${fmtM2(s.util)}</text>`;
   }
   for (const n of Object.values(p.elementos)) if (n.tipo === 'nota' && (!n.capa || visibles.has(n.capa))) rot += `<text class="ex-nota" x="${n.x}" y="${n.y}">● ${esc(n.texto)}</text>`;
+  // la red sale si se está en el modo Red o si su capa está encendida
+  const red = est.modo === 'red' || est.capas.red ? htmlRedExport(app, p) : '';
   const titulo = `${app.doc.centro?.nombre || ''} · ${app.edificio().nombre} · ${p.nombre}`;
   // cajetín dibujado dentro del SVG (para la imagen que se imprime desde el iPad)
   let pie = '';
@@ -984,7 +1160,7 @@ function svgDePlanta(p, { conCalco = est.capas.calco, cajetin = false } = {}) {
 <style>${CSS_EXPORT}</style>
 <defs><pattern id="rayado" patternUnits="userSpaceOnUse" width="0.18" height="0.18" patternTransform="rotate(45)"><rect width="0.18" height="0.18" fill="#fde3c4"/><rect width="0.07" height="0.18" fill="#e07b16"/></pattern></defs>
 <rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="#fff"/>
-${calco.innerHTML}${modelo}<g>${anot}</g><g>${rot}</g>
+${calco.innerHTML}${modelo}${red}<g>${anot}</g><g>${rot}</g>
 <text x="${x0 + 0.6}" y="${y0 + 0.9}" style="font:600 0.5px system-ui,Arial,sans-serif;fill:#1d2330">${esc(titulo)}</text>
 ${pie}
 </svg>`,
@@ -1113,9 +1289,9 @@ if (innerWidth <= 820) document.body.classList.add('sin-panel');
 
 // ---------------------------------------------------------------------------- preferencias
 app.guardarPreferencias = () => {
-  const { capas, orto, paso, grosor, tipoMuro, estadoNuevo, anot } = est;
+  const { capas, orto, paso, grosor, tipoMuro, estadoNuevo, anot, redOp } = est;
   const { herr, color, grosor: grosorAnot, soloLapiz, lapizVisto } = anot;
-  A.guardarLocal('prefs', { capas, orto, paso, grosor, tipoMuro, estadoNuevo, anot: { herr, color, grosor: grosorAnot, soloLapiz, lapizVisto } }).catch(() => {});
+  A.guardarLocal('prefs', { capas, orto, paso, grosor, tipoMuro, estadoNuevo, anot: { herr, color, grosor: grosorAnot, soloLapiz, lapizVisto }, redOp }).catch(() => {});
 };
 
 // ---------------------------------------------------------------------------- arranque
@@ -1130,6 +1306,14 @@ pintarOpciones();
     Object.assign(est.capas, prefs.capas || {});
     for (const k of ['orto', 'paso', 'grosor', 'tipoMuro', 'estadoNuevo']) if (k in prefs) est[k] = prefs[k];
     if (prefs.anot) Object.assign(est.anot, prefs.anot);
+    if (prefs.redOp) {
+      const o = prefs.redOp, d = est.redOp;
+      d.tipo = M.deLista(o.tipo, R.TIPOS_CABLE, d.tipo);
+      d.estado = M.deLista(o.estado, R.ESTADOS_CABLE, d.estado);
+      d.canal = M.deLista(o.canal, R.CANALES, d.canal);
+      d.fin = M.deLista(o.fin, FINALES, d.fin);
+      d.orto = o.orto !== false;
+    }
   }
   // Windows: la app instalada puede abrir un .plano.json con doble clic («Abrir con…»)
   let lanzado = false;

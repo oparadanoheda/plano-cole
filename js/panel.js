@@ -4,6 +4,7 @@ import * as M from './modelo.js';
 import { fmtM, fmtM2, num, leerNum } from './geo.js';
 import { COLOR_USO } from './vista.js';
 import { urlTesela, lonLatAPixel } from './satelite.js';
+import { panelRed, aplicarRed, accionRed, pintarEsquema } from './redpanel.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const opciones = (obj, actual) => Object.entries(obj).map(([k, v]) => `<option value="${k}"${k === actual ? ' selected' : ''}>${esc(v)}</option>`).join('');
@@ -15,8 +16,11 @@ export function pintarPanel(app) {
   const c = document.getElementById('pest-props');
   const p = app.planta();
   const sel = app.est.sel;
+  const modo = app.est.modo;
+  const esRed = sel?.tipo === 'equipo' || sel?.tipo === 'cable';
   let html = '';
   if (!p) html = '<p class="ayuda">Abre un plano para empezar.</p>';
+  else if (esRed || (modo === 'red' && !sel)) html = panelRed(app, sel);
   else if (!sel) html = panelPlanta(app, p);
   else if (sel.tipo === 'muro' && p.muros[sel.id]) html = panelMuro(app, p, sel.id);
   else if (sel.tipo === 'nodo' && p.nodos[sel.id]) html = panelNodo(p, sel.id);
@@ -26,9 +30,9 @@ export function pintarPanel(app) {
   else if (sel.tipo === 'nota' && p.elementos[sel.id]) html = panelNota(p.elementos[sel.id]);
   else html = panelPlanta(app, p);
   c.innerHTML = html;
-  // en Ver y Anotar el plano no se cambia (salvo las notas, que son anotaciones)
-  const soloLectura = app.est.modo !== 'editar' && !(sel?.tipo === 'nota' && app.est.modo === 'anotar');
-  if (soloLectura) {
+  // el plano se cambia en Editar; la red, en Red; en Anotar, solo las notas
+  const editable = modo === 'editar' ? !esRed : modo === 'red' || (modo === 'anotar' && sel?.tipo === 'nota');
+  if (!editable) {
     c.querySelectorAll('input, select, textarea').forEach((el) => { el.disabled = true; });
     c.querySelectorAll('.solo-ed').forEach((el) => el.remove());
   } else c.querySelectorAll('.solo-ver').forEach((el) => el.remove());
@@ -259,7 +263,8 @@ export function instalarPanel(app) {
   const c = document.getElementById('pest-props');
   c.addEventListener('change', (e) => {
     const k = e.target.dataset.k;
-    if (k) aplicar(app, k, e.target.value);
+    if (k?.startsWith('r-')) aplicarRed(app, k, e.target);
+    else if (k) aplicar(app, k, e.target.value);
   });
   c.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); e.target.blur(); }
@@ -268,15 +273,21 @@ export function instalarPanel(app) {
   c.addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.acc) accion(app, b.dataset.acc);
+    if (b.dataset.acc?.startsWith('red-')) accionRed(app, b.dataset.acc, b);
+    else if (b.dataset.acc) accion(app, b.dataset.acc);
     else if (b.dataset.ancla) { app.est.ancla = b.dataset.ancla; app.panel(); }
     else if (b.dataset.irAb) app.seleccionar({ tipo: 'abertura', id: b.dataset.irAb });
+  });
+  document.getElementById('pest-esquema').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-acc]');
+    if (b) accionRed(app, b.dataset.acc, b);
   });
 
   document.querySelectorAll('.pestanas [data-pest]').forEach((b) => b.addEventListener('click', () => {
     document.querySelectorAll('.pestanas [data-pest]').forEach((x) => x.classList.toggle('activa', x === b));
-    for (const id of ['props', 'versiones']) document.getElementById('pest-' + id).hidden = id !== b.dataset.pest;
+    for (const id of ['props', 'esquema', 'versiones']) document.getElementById('pest-' + id).hidden = id !== b.dataset.pest;
     if (b.dataset.pest === 'versiones') pintarVersiones(app);
+    if (b.dataset.pest === 'esquema') pintarEsquema(app);
   }));
 
   // ---------------------------------------------------------------- capas
@@ -401,6 +412,11 @@ export function pintarCapas(app) {
       <button class="btn-ic" data-borrar-anot="${ca.id}" title="Borrar la capa"><svg class="ic"><use href="#i-papelera"/></svg></button></div>`;
   }
   html += '<button class="btn" data-acc="nueva-capa-anot" style="width:100%;margin-top:6px">+ Nueva capa de anotaciones</button>';
+  html += '<div class="p-sub">Red</div>';
+  html += fila('red', 'Cables y equipos', app.est.modo === 'red' ? 'En el modo Red se ven siempre.' : 'Switches, WiFi, tomas y cableado.',
+    'background:linear-gradient(90deg,#16a34a 0 50%,#2563eb 50%);height:5px;border-radius:3px');
+  html += fila('wifi', 'Alcance del WiFi', 'Un círculo por punto WiFi. Es orientativo: los muros lo acortan.',
+    'background:rgba(8,145,178,.18);border:1.5px dashed #0891b2;border-radius:50%;width:16px;height:16px');
   html += '<div class="p-sub">Plano</div>';
   html += fila('espacios', 'Color de las salas', 'Según su uso.', `background:${COLOR_USO.aula}`);
   html += fila('rotulos', 'Nombres y superficies', '', 'background:#fff;border:1px solid #ccc');
