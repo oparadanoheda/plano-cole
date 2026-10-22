@@ -1,0 +1,7 @@
+# Este repositorio solo lleva el programa. Los planos del centro NO se suben nunca.
+*.plano.json
+datos/
+*.pdf
+*.dwg
+*.dxf
+__pycache__/
