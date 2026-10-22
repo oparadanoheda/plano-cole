@@ -1,7 +1,7 @@
 // Service worker: guarda la app para que funcione sin conexión.
 // Al publicar una versión nueva, cambia VERSION para que se renueve la caché.
 
-const VERSION = 'plano-cole-v7';
+const VERSION = 'plano-cole-v8';
 // v2: las teselas se guardan con CORS (las de «plano-cole-teselas» eran opacas y el 3D no las podía usar)
 const TESELAS = 'plano-cole-teselas-2';
 const ARCHIVOS = [

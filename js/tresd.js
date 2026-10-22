@@ -267,7 +267,8 @@ export class Vista3D {
       }
     }
     if (losas.pos.length) {
-      const m = new T.Mesh(losas.geometria(), this.material('#d3cfc5'));
+      // más claro que el suelo gris de cuando no hay foto, para que se distingan los huecos
+      const m = new T.Mesh(losas.geometria(), this.material('#e7e3d9'));
       m.castShadow = true;
       m.receiveShadow = true;
       grupo.add(m);
